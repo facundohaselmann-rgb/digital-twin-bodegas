@@ -1,0 +1,145 @@
+import { PROCESSES, TIME_KEYS, type Days, type ProcessKey, type Warehouse, type Warning, type PackageProfile } from './types';
+import { DEFAULT_TIMES, MON_SAT, uid } from './defaults';
+import { hm } from './time';
+
+const num = (v: unknown, d: number, lo?: number, hi?: number): number => {
+  let x = typeof v === 'number' ? v : parseFloat(String(v));
+  if (!isFinite(x)) x = d;
+  if (lo != null) x = Math.max(lo, x);
+  if (hi != null) x = Math.min(hi, x);
+  return x;
+};
+const int = (v: unknown, d: number, lo?: number, hi?: number) => Math.round(num(v, d, lo, hi));
+const days = (v: unknown): Days => {
+  const a = Array.isArray(v) ? v : [];
+  return [0, 1, 2, 3, 4, 5, 6].map(i => !!a[i]) as Days;
+};
+const time = (v: unknown, d: string): string => (hm(String(v)) == null ? d : String(v).padStart(5, '0'));
+
+function profile(p: Partial<PackageProfile> | null | undefined): PackageProfile {
+  const q = p ?? {};
+  return {
+    weightKg: num(q.weightKg, 2, 0.01, 1000),
+    lengthCm: num(q.lengthCm, 30, 1, 1000),
+    widthCm: num(q.widthCm, 22, 1, 1000),
+    heightCm: num(q.heightCm, 12, 1, 1000),
+    variationPct: num(q.variationPct, 0, 0, 90),
+  };
+}
+
+/** Corrige valores fuera de rango (en el lugar) y devuelve advertencias para mostrar. */
+export function normalize(w: Warehouse): Warning[] {
+  const W: Warning[] = [];
+  w.name = String(w.name ?? '').trim() || 'Bodega';
+  w.seed = int(w.seed, 1, 1, 1e9);
+  w.packageProfile = profile(w.packageProfile);
+
+  /* camiones de entrada */
+  w.inbound = Array.isArray(w.inbound) ? w.inbound : [];
+  w.inbound.forEach(t => {
+    t.id ||= uid('i');
+    t.days = days(t.days);
+    t.arrival = time(t.arrival, '08:00');
+    t.packages = int(t.packages, 0, 0, 1e6);
+    t.mix = { boxes: num(t.mix?.boxes, 100, 0, 100), uld: num(t.mix?.uld, 0, 0, 100), loose: num(t.mix?.loose, 0, 0, 100) };
+    const s = t.mix.boxes + t.mix.uld + t.mix.loose;
+    if (s <= 0) t.mix.boxes = 100;
+    else if (Math.abs(s - 100) > 0.5) W.push({ key: 'w.mixSum', params: { truck: t.name, sum: Math.round(s) } });
+    t.pkgsPerBox = int(t.pkgsPerBox, 60, 1, 10000);
+    t.pkgsPerUld = int(t.pkgsPerUld, 150, 1, 100000);
+    t.volumeVarPct = num(t.volumeVarPct, 0, 0, 90);
+    t.timeVarMin = num(t.timeVarMin, 0, 0, 600);
+  });
+  if (!w.inbound.some(t => t.packages > 0 && t.days.some(Boolean))) W.push({ key: 'w.noInbound' });
+
+  /* grupos de sorting */
+  w.groups = Array.isArray(w.groups) && w.groups.length ? w.groups : [];
+  w.groups.forEach(g => {
+    g.id ||= uid('g');
+    g.sharePct = num(g.sharePct, 0, 0, 100);
+    g.dest = g.dest === 'branch' ? 'branch' : 'stageout';
+    g.reverify = !!g.reverify;
+    g.services = Array.isArray(g.services) && g.services.length ? g.services : [{ id: uid('s'), name: 'Servicio', confirmed: false, weight: 1 }];
+    g.services.forEach(s => { s.id ||= uid('s'); s.weight = num(s.weight, 1, 0, 1000); });
+    g.outbound = Array.isArray(g.outbound) ? g.outbound : [];
+    g.outbound.forEach(o => { o.id ||= uid('o'); o.days = days(o.days); o.arrival = time(o.arrival, '16:00'); });
+    g.profile = g.profile ? profile(g.profile) : null;
+    if (g.dest === 'stageout' && !g.outbound.some(o => o.days.some(Boolean))) W.push({ key: 'w.noOutbound', params: { group: g.name } });
+  });
+  const shareSum = w.groups.reduce((a, g) => a + g.sharePct, 0);
+  if (!w.groups.length) W.push({ key: 'w.noGroups' });
+  else if (shareSum <= 0) { w.groups.forEach(g => (g.sharePct = 1)); W.push({ key: 'w.noShare' }); }
+  else if (Math.abs(shareSum - 100) > 0.5) W.push({ key: 'w.shareSum', params: { sum: Math.round(shareSum * 10) / 10 } });
+
+  /* rutas */
+  w.routes = w.routes ?? { count: 10, first: '14:00', everyMin: 10, days: [...MON_SAT] as Days };
+  w.routes.count = int(w.routes.count, 10, 1, 60);
+  w.routes.first = time(w.routes.first, '14:00');
+  w.routes.everyMin = num(w.routes.everyMin, 10, 0, 600);
+  w.routes.days = days(w.routes.days);
+  if (w.groups.some(g => g.dest === 'branch') && !w.routes.days.some(Boolean)) W.push({ key: 'w.noRouteDays' });
+
+  /* tiempos */
+  w.times = w.times ?? structuredClone(DEFAULT_TIMES);
+  TIME_KEYS.forEach(k => {
+    const t = w.times[k] ?? structuredClone(DEFAULT_TIMES[k]);
+    t.min = num(t.min, DEFAULT_TIMES[k].min, 0);
+    t.mode = num(t.mode, t.min, t.min);
+    t.max = num(t.max, t.mode, t.mode);
+    w.times[k] = t;
+  });
+
+  /* capacidades */
+  const c = w.capacity;
+  c.basketPkgs = int(c.basketPkgs, 60, 1, 100000);
+  c.basketLiters = num(c.basketLiters, 500, 1, 1e6);
+  c.containerPkgs = int(c.containerPkgs, 150, 1, 1e6);
+  c.containerLiters = num(c.containerLiters, 1500, 1, 1e7);
+  c.stageOutSlots = int(c.stageOutSlots, 6, 1, 60);
+  c.truckM3 = num(c.truckM3, 18, 0.1, 1000);
+  c.truckKg = num(c.truckKg, 3500, 1, 1e6);
+  c.stations = c.stations ?? { sort: 4, reverify: 2, branch: 2 };
+  c.stations.sort = int(c.stations.sort, 4, 1, 500);
+  c.stations.reverify = int(c.stations.reverify, 2, 1, 500);
+  c.stations.branch = int(c.stations.branch, 2, 1, 500);
+  w.outboundLoadWindowMin = num(w.outboundLoadWindowMin, 30, 0, 1440);
+  w.volumePct = num(w.volumePct, 100, 1, 1000);
+  w.costs = { overtimeMultiplier: num(w.costs?.overtimeMultiplier, 1.5, 1, 5) };
+
+  /* turnos */
+  w.shifts = Array.isArray(w.shifts) ? w.shifts : [];
+  if (!w.shifts.length) W.push({ key: 'w.noShifts' });
+  w.shifts.forEach(s => {
+    s.id ||= uid('t');
+    s.days = days(s.days);
+    s.start = time(s.start, '06:00');
+    s.end = time(s.end, '14:00');
+    s.breaks = (Array.isArray(s.breaks) ? s.breaks : []).map(b => ({ start: time(b.start, s.start), minutes: num(b.minutes, 0, 0, 240) }));
+    s.productivityPct = num(s.productivityPct, 100, 10, 200);
+    s.costPerHour = num(s.costPerHour, 0, 0, 1000);
+    s.night = !!s.night;
+    s.overtimeHours = s.night ? num(s.overtimeHours, 0, 0, 24) : 0;
+    const st = (s.staff ?? {}) as Record<ProcessKey, number>;
+    PROCESSES.forEach(p => (st[p] = int(st[p], 0, 0, 1000)));
+    s.staff = st;
+    (['sort', 'reverify', 'branch'] as const).forEach(p => {
+      if (st[p] > c.stations[p]) W.push({ key: 'w.staffGtStations', params: { process: p, shift: s.name, staff: st[p], stations: c.stations[p] } });
+    });
+  });
+
+  /* procesos necesarios sin personal en ningún turno */
+  const need = new Set<ProcessKey>(['unload', 'sort']);
+  if (w.inbound.some(t => t.mix.boxes > 0 || t.mix.uld > 0)) need.add('decon');
+  if (w.groups.some(g => g.reverify)) need.add('reverify');
+  if (w.groups.some(g => g.dest === 'branch')) need.add('branch');
+  if (w.groups.some(g => g.dest === 'stageout')) need.add('load');
+  need.forEach(p => {
+    if (!w.shifts.some(s => s.staff[p] > 0 && s.days.some(Boolean))) W.push({ key: 'w.noStaff', params: { process: p } });
+  });
+  return W;
+}
+
+/** Perfil efectivo de un grupo. */
+export function groupProfile(w: Warehouse, gi: number): PackageProfile {
+  return w.groups[gi]?.profile ?? w.packageProfile;
+}

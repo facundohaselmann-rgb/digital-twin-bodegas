@@ -1,0 +1,25 @@
+{
+  "name": "digital-twin-bodegas",
+  "private": true,
+  "version": "0.2.0",
+  "description": "Digital Twin para dimensionar y simular bodegas cross-dock",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "e2e": "node e2e/smoke.mjs"
+  },
+  "dependencies": {
+    "preact": "10.25.4"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "2.9.4",
+    "@types/node": "22.10.2",
+    "typescript": "5.7.3",
+    "vite": "5.4.11",
+    "vite-plugin-singlefile": "2.1.0",
+    "vitest": "2.1.8"
+  }
+}

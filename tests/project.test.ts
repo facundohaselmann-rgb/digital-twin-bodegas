@@ -1,0 +1,34 @@
+import { describe, expect, it } from 'vitest';
+import { newProject, jamaicaWarehouse, blankWarehouse } from '../src/model/defaults';
+import { normalize } from '../src/model/normalize';
+import { parseProject, serialize } from '../src/storage/project';
+import { simulate } from '../src/engine/simulate';
+
+describe('archivo de proyecto', () => {
+  it('se guarda y se vuelve a abrir sin perder datos', () => {
+    const p = newProject(jamaicaWarehouse());
+    const q = parseProject(serialize(p));
+    expect(q).toEqual(p);
+  });
+  it('rechaza archivos que no son proyectos', () => {
+    expect(() => parseProject('{"hola":1}')).toThrow();
+    expect(() => parseProject('no es json')).toThrow();
+  });
+  it('la bodega en blanco es válida y simulable', () => {
+    const w = blankWarehouse();
+    const warnings = normalize(w);
+    expect(warnings.filter(x => x.key !== 'w.staffGtStations')).toEqual([]);
+    const r = simulate(w, { log: false });
+    expect(r.totals.unfinished).toBe(0);
+  });
+  it('la normalización corrige valores inválidos', () => {
+    const w = jamaicaWarehouse();
+    (w.inbound[0] as unknown as Record<string, unknown>).arrival = '99:99';
+    w.shifts[0].overtimeHours = 5; // turno día: no admite horas extra
+    w.capacity.basketPkgs = -3;
+    normalize(w);
+    expect(w.inbound[0].arrival).toBe('08:00');
+    expect(w.shifts[0].overtimeHours).toBe(0);
+    expect(w.capacity.basketPkgs).toBe(1);
+  });
+});
