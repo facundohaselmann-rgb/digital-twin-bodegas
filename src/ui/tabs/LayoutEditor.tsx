@@ -3,7 +3,7 @@ import { useMemo, useRef, useState } from 'preact/hooks';
 import { useWh } from '../store';
 import { nf, t } from '../../i18n';
 import type { Layout, PlanBackground, Project, Warehouse, Zone } from '../../model/types';
-import { autoLayout, distances, zoneKey } from '../../model/layout';
+import { autoLayout, distances, ensureLayout, fitPlan, zoneKey } from '../../model/layout';
 import { normalize } from '../../model/normalize';
 import { K, backgroundSvg, planBox } from '../../plan/plan';
 import { importImage, openPdf, parseDxf } from '../../plan/import';
@@ -11,17 +11,6 @@ import { importImage, openPdf, parseDxf } from '../../plan/import';
 const SNAP = 0.5;
 const snap = (v: number): number => Math.round(v / SNAP) * SNAP;
 const UNIT_M: Record<string, number> = { mm: 0.001, cm: 0.01, m: 1, in: 0.0254, ft: 0.3048 };
-
-/** Ajusta el tamaño de la bodega al plano en todos los escenarios; `f` escala las zonas (al corregir la escala). */
-function fitAll(p: Project, bg: PlanBackground, f = 1): void {
-  p.scenarios.forEach(s => {
-    const w = s.warehouse;
-    w.layout ??= autoLayout(w);
-    w.layout.widthM = bg.w * bg.scale;
-    w.layout.heightM = bg.h * bg.scale;
-    if (f !== 1) w.layout.zones.forEach(z => { z.x *= f; z.y *= f; z.w *= f; z.h *= f; });
-  });
-}
 
 interface Drag { i: number; mode: 'move' | 'size'; x0: number; y0: number; z0: Zone }
 
@@ -41,7 +30,7 @@ export function LayoutEditor({ plan, onProject, onClose, say }: { plan: PlanBack
   const view: Warehouse = { ...w, layout: L };
   const D = distances(view);
 
-  const save = (zones: Zone[]) => update(o => { o.layout = { ...L, zones }; });
+  const save = (zones: Zone[]) => update(o => { ensureLayout(o); o.layout = { ...L, zones }; });
   const name = (z: Zone): string => { const g = w.groups.find(x => x.id === z.ref)?.name ?? ''; return z.kind === 'group' ? g : z.ref ? `${t('z.' + z.kind)} · ${g}` : t('z.' + z.kind); };
   const pt = (e: PointerEvent): [number, number] => {
     const s = svgRef.current!, p = s.createSVGPoint();
@@ -83,11 +72,11 @@ export function LayoutEditor({ plan, onProject, onClose, say }: { plan: PlanBack
     const real = parseFloat(String(prompt(t('ed.scaleAsk'), nf(dm, 1)) ?? '').replace(',', '.'));
     if (!(real > 0) || !(dm > 0)) return;
     const f = real / dm;
-    onProject(pr => { if (!pr.plan) return; pr.plan.scale *= f; fitAll(pr, pr.plan, f); });
+    onProject(pr => { if (!pr.plan) return; pr.plan.scale *= f; fitPlan(pr, pr.plan, f); });
     say(t('ed.scaleDone', { m: nf(plan.w * plan.scale * f, 1) }));
   };
 
-  const setPlan = (bg: PlanBackground) => { onProject(p => { p.plan = bg; fitAll(p, bg); }); };
+  const setPlan = (bg: PlanBackground) => { onProject(p => { p.plan = bg; fitPlan(p, bg); }); };
   const load = async (f: File) => {
     const ext = f.name.split('.').pop()?.toLowerCase() ?? '';
     setBusy(true);
@@ -116,7 +105,7 @@ export function LayoutEditor({ plan, onProject, onClose, say }: { plan: PlanBack
     finally { setBusy(false); }
   };
 
-  const size = (k: 'widthM' | 'heightM', v: number) => { if (v >= 5) update(o => { o.layout ??= structuredClone(L); o.layout[k] = v; }); };
+  const size = (k: 'widthM' | 'heightM', v: number) => { if (v >= 5) update(o => { ensureLayout(o)[k] = v; }); };
   const m = (v: number) => nf(v, 1) + ' m';
   const z = sel != null ? L.zones[sel] : null;
 
@@ -130,7 +119,7 @@ export function LayoutEditor({ plan, onProject, onClose, say }: { plan: PlanBack
         {plan && <button class="btn" onClick={() => { if (confirm(t('ed.removeAsk'))) onProject(p => { p.plan = null; }); }}>{t('ed.remove')}</button>}
         <label class="fld inl"><span>{t('ed.width')}</span><input type="number" min={5} step={0.5} value={Math.round(L.widthM * 10) / 10} disabled={!!plan} onChange={e => size('widthM', +e.currentTarget.value)} /></label>
         <label class="fld inl"><span>{t('ed.height')}</span><input type="number" min={5} step={0.5} value={Math.round(L.heightM * 10) / 10} disabled={!!plan} onChange={e => size('heightM', +e.currentTarget.value)} /></label>
-        <button class="btn" onClick={() => { if (confirm(t('ed.resetAsk'))) update(o => { const a = autoLayout(o); if (plan) { a.widthM = plan.w * plan.scale; a.heightM = plan.h * plan.scale; } o.layout = a; }); }}>{t('ed.reset')}</button>
+        <button class="btn" onClick={() => { if (confirm(t('ed.resetAsk'))) update(o => { ensureLayout(o); const a = autoLayout(o); if (plan) { a.widthM = plan.w * plan.scale; a.heightM = plan.h * plan.scale; } o.layout = a; }); }}>{t('ed.reset')}</button>
         <button class="btn pri" onClick={onClose}>{t('ed.done')}</button>
       </div>
       <div class="hint">{scaleMode ? t(scaleMode.length ? 'ed.scaleClick2' : 'ed.scaleClick1') : t('ed.help')}{!w.layout && <b> {t('ed.noLayout')}</b>}</div>

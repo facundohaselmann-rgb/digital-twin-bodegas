@@ -104,7 +104,6 @@ select{border:1px solid var(--line);background:var(--surface);border-radius:8px;
 #plan text{font-family:'Poppins',system-ui,sans-serif}
 .p-wall{fill:none;stroke:var(--wall);stroke-width:3}
 .p-floor{fill:url(#pgrid)}
-.p-door{fill:var(--floor);stroke:none}
 .p-az{font-size:10px;font-weight:600;fill:var(--text-2);letter-spacing:.05em}
 .p-sm{font-size:9px;fill:var(--muted)}
 .p-md{font-size:10px;fill:var(--text);font-weight:500}

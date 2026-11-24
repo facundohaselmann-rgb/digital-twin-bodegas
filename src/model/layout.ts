@@ -1,5 +1,5 @@
 /* Disposición de la bodega en metros y distancias entre zonas. */
-import type { Layout, ProcessKey, Travel, Warehouse, Zone, ZoneKind } from './types';
+import type { Layout, PlanBackground, ProcessKey, Project, Travel, Warehouse, Zone, ZoneKind } from './types';
 
 /** Valores de catálogo (estándar de la industria, editables). */
 export const DEFAULT_TRAVEL: Travel = {
@@ -36,6 +36,23 @@ export function autoLayout(w: Warehouse): Layout {
   });
   if (br.length) zones.push(zone('branch', '', 31.5, 14.5, 18, 10), zone('exit', '', 49.5, 18.5, 0.5, 3));
   return { widthM: 50, heightM: 25, zones };
+}
+
+/** Crea la disposición si la bodega no tiene (proyectos anteriores a la iteración 4).
+    Con disposición, el cambio de puesto es 2 min + caminata: el valor viejo de 5 min pasa a 2. */
+export function ensureLayout(w: Warehouse): Layout {
+  if (!w.layout) { w.layout = autoLayout(w); if (w.multiskill.changeMin === 5) w.multiskill.changeMin = 2; }
+  return w.layout;
+}
+
+/** Ajusta el tamaño de la bodega al plano en todos los escenarios; `f` escala las zonas (al corregir la escala). */
+export function fitPlan(p: Project, bg: PlanBackground, f = 1): void {
+  p.scenarios.forEach(s => {
+    const L = ensureLayout(s.warehouse);
+    L.widthM = bg.w * bg.scale;
+    L.heightM = bg.h * bg.scale;
+    if (f !== 1) L.zones.forEach(z => { z.x *= f; z.y *= f; z.w *= f; z.h *= f; });
+  });
 }
 
 export const zoneKey = (z: { kind: ZoneKind; ref: string }): string => z.kind + ':' + z.ref;

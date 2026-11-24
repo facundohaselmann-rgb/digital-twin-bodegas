@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { autoLayout, distances, syncLayout, zoneGap } from '../src/model/layout';
+import { autoLayout, distances, ensureLayout, fitPlan, syncLayout, zoneGap } from '../src/model/layout';
 import { jamaicaWarehouse, modelWarehouse, newProject, uid } from '../src/model/defaults';
 import { normalize } from '../src/model/normalize';
 import { simulate } from '../src/engine/simulate';
@@ -43,6 +43,34 @@ describe('layout', () => {
     expect(w.layout!.zones.find(q => q.ref === w.groups[0].id && q.kind === 'group')!.x).toBe(moved);
     expect(w.layout!.zones.some(q => q.ref === w.groups[1].id && q.kind === 'stage')).toBe(false);
     expect(w.layout!.zones.filter(q => q.ref === w.groups[5].id).map(q => q.kind).sort()).toEqual(['group', 'outDoor', 'stage']);
+  });
+});
+
+describe('plano de fondo y proyectos anteriores', () => {
+  it('fijar la escala ajusta la bodega y escala las zonas de todos los escenarios', () => {
+    const p = newProject(jamaicaWarehouse());
+    const before = p.scenarios.map(s => structuredClone(s.warehouse.layout!.zones));
+    const bg = { kind: 'image' as const, name: 'p.png', data: 'data:image/png;base64,', w: 1000, h: 500, scale: 0.05 };
+    fitPlan(p, bg);
+    expect(p.scenarios.every(s => s.warehouse.layout!.widthM === 50 && s.warehouse.layout!.heightM === 25)).toBe(true);
+    bg.scale *= 2;
+    fitPlan(p, bg, 2);
+    p.scenarios.forEach((s, i) => {
+      expect(s.warehouse.layout!.widthM).toBe(100);
+      s.warehouse.layout!.zones.forEach((q, j) => { expect(q.x).toBeCloseTo(before[i][j].x * 2); expect(q.w).toBeCloseTo(before[i][j].w * 2); });
+    });
+  });
+
+  it('un proyecto sin disposición pasa a 2 min + caminata al crearla; un valor propio se respeta', () => {
+    const w = jamaicaWarehouse(); w.layout = null; w.multiskill.changeMin = 5;
+    expect(ensureLayout(w).zones.length).toBeGreaterThan(0);
+    expect(w.multiskill.changeMin).toBe(2);
+    const v = jamaicaWarehouse(); v.layout = null; v.multiskill.changeMin = 4;
+    ensureLayout(v);
+    expect(v.multiskill.changeMin).toBe(4);
+    v.multiskill.changeMin = 5;
+    ensureLayout(v); // ya tiene disposición: no se toca
+    expect(v.multiskill.changeMin).toBe(5);
   });
 });
 
