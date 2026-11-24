@@ -45,6 +45,8 @@ export function App() {
   const [planEdit, setPlanEdit] = useState(false);
   const [toast, setToast] = useState('');
   const [undoN, setUndoN] = useState(0);
+  /** Conclusión del reporte editada a mano; null = la automática. Vive acá para no perderse al cambiar de pestaña. */
+  const [repText, setRepText] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const seq = useRef(0);
   /** Deshacer: hasta 20 estados anteriores del proyecto. */
@@ -75,7 +77,7 @@ export function App() {
     setDirty(true);
     say(t('undo.done', { n: history.current.length }));
   };
-  const resetHistory = () => { history.current = []; lastK.current = null; setPrevK(null); };
+  const resetHistory = () => { history.current = []; lastK.current = null; setPrevK(null); setRepText(null); };
   useEffect(() => setUndoN(history.current.length), [project]);
 
   /* simula cada vez que cambia la bodega (con una pequeña espera para agrupar cambios) */
@@ -169,6 +171,8 @@ export function App() {
   const warns = run?.warnings ?? [];
   const warnCount = (s: Section) => warns.filter(x => WARN_SECTION[x.key] === s).length;
   const shownWarns = tab === 'config' ? warns.filter(x => WARN_SECTION[x.key] === section) : warns;
+  // una comparación corrida antes del último cambio ya no vale para Resultados ni para el reporte
+  const freshCmp = cmp && cmp.at === project.updatedAt ? cmp : null;
 
   return (
     <WhContext.Provider value={{ w: project.warehouse, update }}>
@@ -236,14 +240,14 @@ export function App() {
             {shownWarns.length > 0 && !(tab === 'plan' && planEdit) && <div class="warns">{shownWarns.map(x => <div class="warn">⚠ {warnText(x)}</div>)}</div>}
             {run && tab === 'plan' && <PlanTab key={lang} w={run.w} r={run.r} k={run.k} prevK={prevK} rep={rep.s} plan={project.plan ?? null} onProject={updateProject} say={say}
               edit={planEdit} setEdit={setPlanEdit} onGoConfig={goConfig} />}
-            {run && tab === 'results' && <ResultsTab w={run.w} r={run.r} rep={rep} cmp={cmp} onReport={() => setTab('report')} />}
+            {run && tab === 'results' && <ResultsTab w={run.w} r={run.r} rep={rep} cmp={freshCmp} onReport={() => setTab('report')} />}
             {tab === 'scenarios' && <ScenariosTab project={project} cmp={cmp} progress={cmpProgress} stale={!!cmp && cmp.at !== project.updatedAt} onCompare={compare}
               onActivate={id => updateProject(p => { p.activeScenario = id; })}
               onDuplicate={() => updateProject(p => { const a = p.scenarios.find(s => s.id === p.activeScenario)!; const c = { id: uid('e'), name: t('sc.copy', { name: a.name }), warehouse: structuredClone(a.warehouse) }; p.scenarios.push(c); p.activeScenario = c.id; })}
               onRename={(id, name) => updateProject(p => { p.scenarios.find(s => s.id === id)!.name = name; })}
               onDelete={id => updateProject(p => { p.scenarios = p.scenarios.filter(s => s.id !== id); })} />}
             {tab === 'config' && <ConfigTab section={section} onEditLayout={() => { setTab('plan'); setPlanEdit(true); }} />}
-            {run && tab === 'report' && <ReportTab w={run.w} r={run.r} k={run.k} rep={rep.s} cmp={cmp} plan={project.plan ?? null} scenario={project.scenarios.find(s => s.id === project.activeScenario)?.name ?? ''} />}
+            {run && tab === 'report' && <ReportTab w={run.w} r={run.r} k={run.k} rep={rep.s} cmp={freshCmp} text={repText} setText={setRepText} plan={project.plan ?? null} scenario={project.scenarios.find(s => s.id === project.activeScenario)?.name ?? ''} />}
           </main>
         </div>
       </div>

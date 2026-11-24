@@ -278,7 +278,7 @@ tr.active td{background:var(--green-l)}
 @media print{
   :root{color-scheme:light}
   body{background:#fff}
-  header,.cfgbar,.warns,.toast,nav,.btn{display:none!important}
+  .cfgbar,.warns,.toast,nav,.btn{display:none!important}
   .print-only{display:block;font-size:18px;margin-bottom:10px}
   main{padding:0;max-width:none}
   .card,.stat{break-inside:avoid;border-color:#ccc}
@@ -346,5 +346,4 @@ tr.active td{background:var(--green-l)}
   body.rep-mode main{padding:0}
   body.rep-mode .report{display:block;background:none;padding:0;max-height:none;overflow:visible;border-radius:0}
   body.rep-mode .page{zoom:1;box-shadow:none;break-after:page;margin:0}
-  body.rep-mode .rhead{display:flex!important}
 }

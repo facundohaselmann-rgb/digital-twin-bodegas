@@ -54,6 +54,10 @@ await pg.click('nav button:nth-child(5)'); await pg.waitForSelector('.report .pa
 const pages = await pg.locator('.report .page').count();
 console.log('reporte: páginas', pages, '·', (await pg.locator('.rep-ctl textarea').inputValue()).slice(0, 60) + '…');
 if (pages < 7) errs.push('el reporte debería tener al menos 7 páginas');
+// la conclusión editada se conserva al ir a otra pestaña y volver
+await pg.fill('.rep-ctl textarea', 'Conclusión de prueba');
+await pg.click('nav button:nth-child(1)'); await pg.click('nav button:nth-child(5)'); await pg.waitForSelector('.rep-ctl textarea');
+if (await pg.locator('.rep-ctl textarea').inputValue() !== 'Conclusión de prueba') errs.push('se perdió la conclusión editada al cambiar de pestaña');
 await shot('report.png');
 // cambiar idioma
 await pg.click('.langsw button:nth-child(2)'); await pg.waitForTimeout(300);

@@ -5,7 +5,6 @@ import { Check, Field, Num, Select, Text, Time } from '../components/inputs';
 import { nf, pct, t } from '../../i18n';
 import type { ProcessKey, TimeKey, Warehouse, ZoneKind } from '../../model/types';
 import { SECOND_KEYS, type SimResult } from '../../engine/simulate';
-import { fmtHM } from '../../model/time';
 import type { Section } from './ConfigTab';
 
 /** Sección de Configuración que tiene el resto de los campos de cada zona. */
@@ -94,7 +93,7 @@ export function ZonePanel({ zone, w, r, onClose, onGoConfig }: { zone: string; w
       break;
     case 'rt2Door':
       fields = <div class="frow"><Field label={t('cfg.retDay')}><Select path="returns.rt2.day" options={[0, 1, 2, 3, 4, 5, 6].map(d => [String(d), t('d' + d)])} /></Field><Field label={t('cfg.retTime')} w={120}><Time path="returns.rt2.time" /></Field><Field label={t('cfg.retMaxBoxes')}><Num path="returns.rt2.maxBoxes" min={1} step={1} /></Field></div>;
-      stats = <>{kv(t('res.rRt2'), nf(R.trips))}{kv(t('zp.nextRt2'), `${t('d' + pw.returns.rt2.day)} ${fmtHM(Number(pw.returns.rt2.time.slice(0, 2)) * 60 + Number(pw.returns.rt2.time.slice(3, 5)))}`)}</>;
+      stats = <>{kv(t('res.rRt2'), nf(R.trips))}{kv(t('zp.nextRt2'), `${t('d' + pw.returns.rt2.day)} ${pw.returns.rt2.time}`)}</>;
       break;
   }
 

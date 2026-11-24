@@ -24,10 +24,9 @@ function PlanSnap({ w, plan }: { w: Warehouse; plan: PlanBackground | null }) {
   return <svg ref={ref} class="rplan" xmlns="http://www.w3.org/2000/svg" />;
 }
 
-export function ReportTab({ w, r, k, rep, cmp, plan, scenario }: { w: Warehouse; r: SimResult; k: Kpis; rep: KpiSummaries | null; cmp: Comparison | null; plan: PlanBackground | null; scenario: string }) {
+export function ReportTab({ w, r, k, rep, cmp, text, setText, plan, scenario }: { w: Warehouse; r: SimResult; k: Kpis; rep: KpiSummaries | null; cmp: Comparison | null; text: string | null; setText: (v: string | null) => void; plan: PlanBackground | null; scenario: string }) {
   const [on, setOn] = useState<Record<Sec, boolean>>(() => { try { return { ...Object.fromEntries(SECS.map(s => [s, true])), ...JSON.parse(localStorage.getItem('dtw-report') || '{}') }; } catch { return Object.fromEntries(SECS.map(s => [s, true])) as Record<Sec, boolean>; } });
   const auto = conclusion(k, r, cmp);
-  const [text, setText] = useState<string | null>(null); // null: se usa la automática, que se actualiza con cada corrida
   useEffect(() => { document.body.classList.add('rep-mode'); return () => document.body.classList.remove('rep-mode'); }, []);
   useEffect(() => { try { localStorage.setItem('dtw-report', JSON.stringify(on)); } catch { /* ignorar */ } }, [on]);
   const cost = computeCost(r, w), inb = r.totals.inbound;

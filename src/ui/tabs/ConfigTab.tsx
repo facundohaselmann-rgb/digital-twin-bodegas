@@ -19,7 +19,7 @@ export type Section = typeof SECTIONS[number];
 /** Sección donde se corrige cada aviso de validación (los que no figuran son generales). */
 export const WARN_SECTION: Record<string, Section> = {
   'w.mixSum': 'inbound', 'w.noInbound': 'inbound', 'w.noOutbound': 'groups', 'w.noGroups': 'groups', 'w.noShare': 'groups', 'w.shareSum': 'groups',
-  'w.noRouteDays': 'groups', 'w.noShifts': 'shifts', 'w.noStaff': 'shifts', 'w.staffGtStations': 'shifts', 'w.shelfFull': 'returns',
+  'w.noRouteDays': 'groups', 'w.noShifts': 'shifts', 'w.noStaff': 'shifts', 'w.staffGtStations': 'shifts', 'w.unfinished': 'shifts', 'w.shelfFull': 'returns',
 };
 
 export function ConfigTab({ section, onEditLayout }: { section: Section; onEditLayout: () => void }) {
