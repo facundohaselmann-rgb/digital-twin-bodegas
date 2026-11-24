@@ -97,6 +97,25 @@ describe('reglas de negocio', () => {
     expect(rb.processes.find(p => p.key === 'sort')!.busyMin).toBeGreaterThan(ra.processes.find(p => p.key === 'sort')!.busyMin);
   });
 
+  it('la utilización se mide por turno, no se reparte', () => {
+    const w = base();
+    w.shifts[0].staff.sort = 3; w.shifts[1].staff.sort = 10; w.capacity.stations.sort = 20;
+    const r = simulate(w, { log: false });
+    const u = (night: boolean) => r.shifts.find(s => s.process === 'sort' && s.night === night)!.util;
+    expect(u(true)).toBeLessThan(u(false)); // 10 personas de noche no pueden estar tan ocupadas como 3 de día
+  });
+
+  it('con muchas horas extra nadie trabaja más horas de las pagadas', () => {
+    const w = base();
+    w.shifts[0].staff.sort = 0; w.shifts[1].staff.sort = 1; w.shifts[1].overtimeHours = 16;
+    w.inbound.forEach(i => (i.packages *= 3));
+    const r = simulate(w, { log: false });
+    // 1 % de margen: la tarea en curso al cierre del turno se termina (antes del arreglo daba 114 %)
+    r.processes.forEach(p => expect(p.busyMin).toBeLessThanOrEqual(p.paidMin * 1.01));
+    r.shifts.forEach(s => expect(s.busyMin).toBeLessThanOrEqual(s.paidMin * 1.01));
+    expect(r.shifts.find(s => s.process === 'sort')!.otMin).toBeGreaterThan(0);
+  });
+
   it('el peso y volumen del paquete limitan la carga del camión', () => {
     const w = base();
     w.capacity.truckM3 = 1; // camión diminuto: necesita varios viajes

@@ -24,6 +24,7 @@ const D: Record<string, [string, string]> = {
   'file.downloaded': ['Descargado: {name} (tu navegador no permite guardar directo en una carpeta)', 'Downloaded: {name} (your browser cannot save directly to a folder)'],
   'run.info': ['{pkgs} paquetes · simulado en {ms} ms · semilla {seed}', '{pkgs} packages · simulated in {ms} ms · seed {seed}'],
   'run.running': ['Simulando…', 'Simulating…'],
+  'run.error': ['La simulación falló ({msg}). Revisá la configuración.', 'The simulation failed ({msg}). Check the configuration.'],
   'lang': ['Idioma', 'Language'],
   'yes': ['Sí', 'Yes'], 'no': ['No', 'No'],
   'add': ['Agregar', 'Add'], 'remove': ['Quitar', 'Remove'],

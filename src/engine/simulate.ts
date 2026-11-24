@@ -111,17 +111,19 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     return basketsWaiting > 0 && ORDER[p] >= ORDER.reverify;
   };
   const otDay = new Array(14).fill(0);
-  const leaveOT = (w: Worker): void => {
+  const endOT = (w: Worker): void => {
     const m = now - w.otStart;
     if (w.otStart < WEEK) { w.otMin += m; otDay[Math.floor(w.otStart / DAY)] += m; }
-    w.ot = false; setState(w, 0);
+    w.ot = false;
   };
+  const leaveOT = (w: Worker): void => { endOT(w); setState(w, 0); };
   const checkIdleOT = (): void => {
     for (const w of otWorkers) if (w.ot && w.state === 1 && (!hasWorkAhead(w.proc) || now >= w.otEnd)) leaveOT(w);
   };
   const otWorkers = new Set<Worker>();
 
   const dayBusy = new Array(14).fill(0), dayLast: (number | null)[] = new Array(14).fill(null);
+  const busyShift: Record<string, number> = {};
   const submit = (p: ProcessKey, j: Job): void => {
     const P = pools[p];
     j.eq = now;
@@ -147,7 +149,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
       j.start?.();
       at(now + d, () => {
         P.busyMin += d;
-        if (startDay < 7) P.busyW1 += d;
+        if (startDay < 7) { P.busyW1 += d; busyShift[w.shift + '|' + p] = (busyShift[w.shift + '|' + p] ?? 0) + d; }
         P.lastEnd = now;
         dayBusy[startDay] += d;
         dayLast[startDay] = Math.max(dayLast[startDay] ?? 0, now);
@@ -201,7 +203,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
       at(ws, () => {
         shiftWorkers[si].forEach(w => {
           w.inWin = true; w.brk = false;
-          if (w.ot) leaveOT(w);
+          if (w.ot) endOT(w); // si está en una tarea, la termina antes de quedar libre
           if (w.state === 0 || w.state === 3) setState(w, 1);
         });
         PROCESSES.forEach(dispatch);
@@ -495,17 +497,11 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     return { key: p, jobs: P.jobs, busyMin: P.busyW1, paidMin: pm, otMin: otByProc[p] ?? 0, util: pm > 0 ? P.busyW1 / pm : 0,
       waitAvg: P.jobs ? P.waitSum / P.jobs : 0, maxQueuePkgs: P.maxQPk, first: P.first, lastEnd: P.lastEnd };
   });
-  const busyShiftProc: Record<string, number> = {};
-  // aproximación: el tiempo ocupado se reparte entre turnos en proporción a las horas pagadas
-  PROCESSES.forEach(p => {
-    const tot = (paid.proc[p] ?? 0) + (otByProc[p] ?? 0);
-    W.shifts.forEach((_, si) => { const k = si + '|' + p; const m = (paid.shiftProc[k] ?? 0) + (otByShiftProc[k] ?? 0); busyShiftProc[k] = tot > 0 ? pools[p].busyW1 * m / tot : 0; });
-  });
   const shifts: ShiftStat[] = [];
   W.shifts.forEach((s, si) => PROCESSES.forEach(p => {
     const k = si + '|' + p, pm = (paid.shiftProc[k] ?? 0) + (otByShiftProc[k] ?? 0);
     if (!s.staff[p]) return;
-    shifts.push({ shiftId: s.id, name: s.name, night: s.night, process: p, workers: s.staff[p], paidMin: pm, busyMin: busyShiftProc[k], otMin: otByShiftProc[k] ?? 0, util: pm > 0 ? busyShiftProc[k] / pm : 0 });
+    shifts.push({ shiftId: s.id, name: s.name, night: s.night, process: p, workers: s.staff[p], paidMin: pm, busyMin: busyShift[k] ?? 0, otMin: otByShiftProc[k] ?? 0, util: pm > 0 ? (busyShift[k] ?? 0) / pm : 0 });
   }));
   const arrivedDay = new Array(7).fill(0);
   trucks.forEach(t => (arrivedDay[t.day] += t.total));
