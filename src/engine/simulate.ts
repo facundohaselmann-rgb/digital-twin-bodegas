@@ -56,12 +56,21 @@ export interface SimResult {
 /* ------------------------------------------------------------------ */
 interface Pkg { ti: number; g: number; s: number; r: number; vol: number; kg: number; wi2: number; bi: number; nc: boolean; relabeled: boolean }
 interface Unit { pk: Pkg[]; sk: string | null; m3: number; kg: number }
-interface Job { pk: number; base: () => number; start?: () => void; done: () => void; cancelled?: boolean; started?: boolean; eq?: number; free?: boolean }
+interface Job { pk: number; base: () => number; machine?: () => number; start?: () => void; done: () => void; cancelled?: boolean; started?: boolean; eq?: number; free?: boolean }
 /** state: 0 fuera de turno, 1 libre, 2 trabajando, 3 en pausa, 4 cambiando de puesto */
 interface Worker { shift: number; home: ProcessKey; proc: ProcessKey; state: 0 | 1 | 2 | 3 | 4; inWin: boolean; brk: boolean; ot: boolean; otStart: number; otEnd: number; prod: number; otMin: number; busyW1: number; changes: number; changeMin: number; idleSince: number }
 /** q: tareas que necesitan estación; free: tareas sin estación (p. ej. sorting manual al lado del sorter). */
 interface Pool { key: ProcessKey; q: Deque<Job>; free: Deque<Job>; qPk: number; idle: Worker[]; stations: number; stBusy: number; busy: number; duty: number; incoming: number; busyW1: number; jobs: number; waitSum: number; maxQPk: number }
 interface OutTruck { gi: number; day: number; arr: number; sched: number; state: 'here' | 'closing' | 'gone'; m3: number; kg: number; units: number; pkgs: number; inflight: number; jobs: Job[] }
+
+/** Multiskill: a qué proceso va una persona que quedó libre. */
+export function nextProcess(home: ProcessKey, current: ProcessKey, needsHelp: (p: ProcessKey) => boolean, hasWork: (p: ProcessKey) => boolean, priority: readonly ProcessKey[]): ProcessKey {
+  if (current !== home && needsHelp(home)) return home;   // vuelve a su puesto si tiene trabajo
+  if (hasWork(current)) return current;
+  if (needsHelp('load')) return 'load';                    // la carga va primero si hay camión esperando
+  for (const p of priority) if (needsHelp(p)) return p;
+  return current;
+}
 
 export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
   const seed = opt.seed ?? W.seed;
@@ -125,13 +134,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
   };
 
   /* multiskill: a dónde va una persona que quedó libre */
-  const pickTarget = (w: Worker): ProcessKey => {
-    if (w.proc !== w.home && needsHelp(pools[w.home])) return w.home;        // vuelve a su puesto si tiene trabajo
-    if (hasWork(pools[w.proc])) return w.proc;
-    if (needsHelp(pools.load)) return 'load';                                 // la carga va primero si hay camión esperando
-    for (const p of W.multiskill.priority) if (needsHelp(pools[p])) return p;
-    return w.proc;
-  };
+  const pickTarget = (w: Worker): ProcessKey => nextProcess(w.home, w.proc, p => needsHelp(pools[p]), p => hasWork(pools[p]), W.multiskill.priority);
   const move = (w: Worker, target: ProcessKey): void => {
     setState(w, 4);
     pools[target].incoming++;
@@ -199,7 +202,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
       j.started = true;
       P.jobs++;
       P.waitSum += now - (j.eq ?? now);
-      const d = j.base() / w.prod;
+      const d = Math.max(j.base() / w.prod, j.machine?.() ?? 0); // la productividad acelera a la persona, no a la máquina
       const startDay = Math.min(13, Math.floor(now / DAY));
       j.start?.();
       at(now + d, () => {
@@ -321,7 +324,8 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
   const cptRoute: number[][] = [...Array(R).keys()].map(r => pickupTimes(r).sort((a, b) => a - b));
   const times: number[] = [], timesG: number[][] = G.map(() => []);
   const cptRec = G.map(() => ({ n: 0, onTime: 0, noCpt: 0, delays: [] as number[] }));
-  const setRc0 = (pk: Pkg): void => {
+  /** `left`: salida programada del camión en que se fue (Stage out); si salió en su camión del CPT, cumple aunque la carga termine justo después. */
+  const setRc0 = (pk: Pkg, left?: number): void => {
     EV['RC-0']++; hadd('rc0', 1); dayRc0[Math.min(13, Math.floor(now / DAY))]++;
     const d = now - pk.wi2; times.push(d); timesG[pk.g].push(d);
     const list = G[pk.g].dest === 'branch' ? cptRoute[pk.r] : cptStage[pk.g];
@@ -329,7 +333,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     const c = cptRec[pk.g];
     c.n++;
     if (cpt == null) c.noCpt++;
-    else if (now <= cpt + 1e-9) c.onTime++;
+    else if ((left ?? now) <= cpt + 1e-9) c.onTime++;
     else c.delays.push(now - cpt);
   };
 
@@ -425,7 +429,8 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     let ex: string | null = null;
     submit('sort', { pk: 1,
       // la máquina limita el ritmo: con k inductores trabajando, cada uno no puede inducir más rápido que k / capacidad
-      base: () => { ex = exception(pk, SR.noReadPct); return Math.max(T('induct'), pools.sort.stBusy / (SR.machinePerHour / 60)) + (ex || shared.has(sk) ? 0 : reserve(pk)); },
+      base: () => { ex = exception(pk, SR.noReadPct); return T('induct') + (ex || shared.has(sk) ? 0 : reserve(pk)); },
+      machine: () => pools.sort.stBusy / (SR.machinePerHour / 60),
       done: () => {
         sorterSt.inducted++; hadd('inducted', 1);
         if (ex) { if (ex === 'noRead') sorterSt.noRead++; toHospital(pk); }
@@ -523,7 +528,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
         done: () => {
           tk.inflight--; tk.pkgs += u.pk.length;
           stageUnits[gi]--; stagePk[gi] -= u.pk.length;
-          u.pk.forEach(p => { setRc0(p); finish(); });
+          u.pk.forEach(p => { setRc0(p, tk.sched); finish(); });
           L('ld', { g: gi, n: u.pk.length });
           if (tk.state === 'closing' && tk.inflight === 0) depart(tk);
         } };
