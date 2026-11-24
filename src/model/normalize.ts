@@ -113,7 +113,7 @@ export function normalize(w: Warehouse): Warning[] {
     noReadPct: num(sr.noReadPct, 0, 0, 100) } };
   w.hospital = { exceptionPct: num(w.hospital?.exceptionPct, 0, 0, 100), relabelPct: num(w.hospital?.relabelPct, 75, 0, 100) };
   const pr = (w.multiskill?.priority ?? []).filter(p => (PROCESSES as readonly string[]).includes(p));
-  w.multiskill = { changeMin: num(w.multiskill?.changeMin, 5, 0, 240), priority: [...new Set([...pr, ...PROCESSES])] };
+  w.multiskill = { bufferMin: num(w.multiskill?.bufferMin, 10, 0, 240), changeMin: num(w.multiskill?.changeMin, 5, 0, 240), priority: [...new Set([...pr, ...PROCESSES])] };
   w.cptLeadMin = num(w.cptLeadMin, 240, 0, 7 * 1440);
 
   /* turnos */

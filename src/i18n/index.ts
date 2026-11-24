@@ -204,6 +204,7 @@ const D: Record<string, [string, string]> = {
   'cfg.hospital': ['Hospital', 'Hospital'], 'cfg.exceptionPct': ['Excepciones en Scan 1 (%)', 'Scan 1 exceptions (%)'], 'cfg.relabelPct': ['Se reetiquetan (%)', 'Relabeled (%)'],
   'cfg.hospitalHint': ['El resto va a destrucción. Los reetiquetados vuelven a sorting.', 'The rest goes to destruction. Relabeled packages go back to sorting.'],
   'cfg.multiskill': ['Multiskill', 'Multiskill'], 'cfg.changeMin': ['Cambio de puesto (min)', 'Post change (min)'],
+  'cfg.bufferMin': ['Espera antes de cambiar (min)', 'Wait before switching (min)'], 'cfg.bufferHint': ['Sin trabajo en su puesto, espera este tiempo antes de ir a ayudar a otro proceso. Volver a su puesto no espera.', 'With no work at their post, staff wait this long before helping another process. Returning to their post does not wait.'],
   'cfg.priority': ['Orden de ayuda (la carga va primero si hay un camión esperando)', 'Help order (loading goes first when a truck is waiting)'],
   'cfg.cptLead': ['Tiempo esperado de procesamiento (min)', 'Expected processing time (min)'], 'cfg.cptHint': ['Define el CPT de cada paquete: el primero que queda al menos este tiempo después de su WI-2.', 'Sets each package CPT: the first one at least this long after its WI-2.'],
   'cfg.up': ['Subir', 'Move up'],

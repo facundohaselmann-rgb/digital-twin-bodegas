@@ -142,8 +142,8 @@ export interface Warehouse {
   sorting: { type: SortingType; sorter: Sorter };
   /** % de paquetes con excepción en el Scan 1 y % de esos que se reetiquetan (el resto se destruye). */
   hospital: { exceptionPct: number; relabelPct: number };
-  /** Minutos para cambiar de puesto y orden en que se ayuda a otros procesos (la carga va primero si hay camión). */
-  multiskill: { changeMin: number; priority: ProcessKey[] };
+  /** Espera sin trabajo antes de ir a ayudar a otro proceso, minutos para cambiar de puesto y orden de ayuda (la carga va primero si hay camión). */
+  multiskill: { bufferMin: number; changeMin: number; priority: ProcessKey[] };
   /** Tiempo esperado de procesamiento: el CPT de un paquete es el primero que queda al menos esto después de su WI-2. */
   cptLeadMin: number;
 }

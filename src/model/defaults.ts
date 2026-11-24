@@ -91,7 +91,7 @@ export function jamaicaWarehouse(): Warehouse {
     costs: { overtimeMultiplier: 1.5 },
     sorting: { type: 'manual', sorter: structuredClone(DEFAULT_SORTER) },
     hospital: { exceptionPct: 1.5, relabelPct: 75 },
-    multiskill: { changeMin: 5, priority: [...PROCESSES] },
+    multiskill: { bufferMin: 10, changeMin: 5, priority: [...PROCESSES] },
     cptLeadMin: 240,
   };
 }

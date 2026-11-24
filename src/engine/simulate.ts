@@ -58,7 +58,7 @@ interface Pkg { ti: number; g: number; s: number; r: number; vol: number; kg: nu
 interface Unit { pk: Pkg[]; sk: string | null; m3: number; kg: number }
 interface Job { pk: number; base: () => number; start?: () => void; done: () => void; cancelled?: boolean; started?: boolean; eq?: number; free?: boolean }
 /** state: 0 fuera de turno, 1 libre, 2 trabajando, 3 en pausa, 4 cambiando de puesto */
-interface Worker { shift: number; home: ProcessKey; proc: ProcessKey; state: 0 | 1 | 2 | 3 | 4; inWin: boolean; brk: boolean; ot: boolean; otStart: number; otEnd: number; prod: number; otMin: number; busyW1: number; changes: number; changeMin: number }
+interface Worker { shift: number; home: ProcessKey; proc: ProcessKey; state: 0 | 1 | 2 | 3 | 4; inWin: boolean; brk: boolean; ot: boolean; otStart: number; otEnd: number; prod: number; otMin: number; busyW1: number; changes: number; changeMin: number; idleSince: number }
 /** q: tareas que necesitan estación; free: tareas sin estación (p. ej. sorting manual al lado del sorter). */
 interface Pool { key: ProcessKey; q: Deque<Job>; free: Deque<Job>; qPk: number; idle: Worker[]; stations: number; stBusy: number; busy: number; duty: number; incoming: number; busyW1: number; jobs: number; waitSum: number; maxQPk: number }
 interface OutTruck { gi: number; day: number; arr: number; sched: number; state: 'here' | 'closing' | 'gone'; m3: number; kg: number; units: number; pkgs: number; inflight: number; jobs: Job[] }
@@ -73,7 +73,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
   const cap = W.capacity;
   const G = W.groups;
   const R = W.routes.count;
-  const ST = W.sorting.type, SR = W.sorting.sorter, HOS = W.hospital, CHANGE = W.multiskill.changeMin;
+  const ST = W.sorting.type, SR = W.sorting.sorter, HOS = W.hospital, CHANGE = W.multiskill.changeMin, BUFFER = W.multiskill.bufferMin;
   const warnings: Warning[] = [];
   const log: LogEv[] = [];
   let now = 0;
@@ -91,7 +91,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
   const workers: Worker[] = [];
   const shiftWorkers: Worker[][] = W.shifts.map((s, si) => {
     const arr: Worker[] = [];
-    PROCESSES.forEach(p => { for (let i = 0; i < s.staff[p]; i++) arr.push({ shift: si, home: p, proc: p, state: 0, inWin: false, brk: false, ot: false, otStart: 0, otEnd: 0, prod: s.productivityPct / 100, otMin: 0, busyW1: 0, changes: 0, changeMin: 0 }); });
+    PROCESSES.forEach(p => { for (let i = 0; i < s.staff[p]; i++) arr.push({ shift: si, home: p, proc: p, state: 0, inWin: false, brk: false, ot: false, otStart: 0, otEnd: 0, prod: s.productivityPct / 100, otMin: 0, busyW1: 0, changes: 0, changeMin: 0, idleSince: 0 }); });
     workers.push(...arr);
     return arr;
   });
@@ -103,7 +103,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     if (old === 1 || old === 2) P.duty--;
     if (old === 2) P.busy--;
     w.state = s;
-    if (s === 1) P.idle.push(w);
+    if (s === 1) { P.idle.push(w); w.idleSince = now; }
     if (s === 1 || s === 2) P.duty++;
     if (s === 2) P.busy++;
   };
@@ -141,15 +141,23 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
       w.proc = target;
       if (!w.inWin && !w.ot) setState(w, 0);
       else if (w.brk) setState(w, 3);
-      else { setState(w, 1); dispatch(target); }
+      else { setState(w, 1); armBuffer(w); dispatch(target); }
     });
+  };
+  /** Sin trabajo, espera BUFFER minutos en su puesto; si sigue libre, se fija si hace falta en otro proceso. */
+  const armBuffer = (w: Worker): void => {
+    if (BUFFER <= 0) return;
+    const since = w.idleSince;
+    at(now + BUFFER, () => { if (w.state === 1 && w.idleSince === since) { const t2 = pickTarget(w); if (t2 !== w.proc) move(w, t2); } });
   };
   function release(w: Worker): void {
     if (w.ot) { if (now >= w.otEnd || !anyWork()) { leaveOT(w); return; } }
     else if (!w.inWin) { setState(w, 0); return; }
     else if (w.brk) { setState(w, 3); return; }
     const target = pickTarget(w);
-    if (target !== w.proc) move(w, target); else setState(w, 1);
+    if (target !== w.proc && (target === w.home || BUFFER <= 0)) { move(w, target); return; }   // volver a su puesto no espera
+    setState(w, 1);
+    armBuffer(w);
   }
   /** Trae gente libre de procesos sin trabajo; primero a quienes tienen este proceso como puesto. */
   const recruit = (p: ProcessKey): void => {
@@ -158,7 +166,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
       let best: Worker | undefined;
       for (const q of PROCESSES) {
         if (q === p || hasWork(pools[q])) continue;
-        for (const w of pools[q].idle) { if (w.home === p) { best = w; break; } best ??= w; }
+        for (const w of pools[q].idle) { if (w.home === p) { best = w; break; } if (now - w.idleSince >= BUFFER) best ??= w; }
         if (best?.home === p) break;
       }
       if (!best) return;

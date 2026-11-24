@@ -141,6 +141,16 @@ describe('iteración 2', () => {
     r.shifts.forEach(s => expect(s.busyMin).toBeLessThanOrEqual(s.paidMin * 1.01));
   });
 
+  it('multiskill: la espera antes de cambiar reduce los cambios de puesto', () => {
+    const a = base(), b = base();
+    a.multiskill.bufferMin = 0; b.multiskill.bufferMin = 10;
+    const ra = simulate(a, { log: false }), rb = simulate(b, { log: false });
+    const ch = (r: typeof ra) => r.shifts.reduce((x, s) => x + s.changes, 0);
+    expect(ch(rb)).toBeLessThan(ch(ra));
+    expect(rb.totals.unfinished).toBe(0);
+    rb.shifts.forEach(s => expect(s.busyMin).toBeLessThanOrEqual(s.paidMin * 1.01));
+  });
+
   it('sorter: no supera la capacidad de la máquina', () => {
     const w = base();
     w.sorting.type = 'sorter'; w.sorting.sorter.machinePerHour = 600; w.sorting.sorter.inductionPoints = 8;
