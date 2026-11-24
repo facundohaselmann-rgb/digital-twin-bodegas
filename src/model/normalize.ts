@@ -133,7 +133,8 @@ export function normalize(w: Warehouse): Warning[] {
     PROCESSES.forEach(p => (st[p] = int(st[p], 0, 0, 1000)));
     s.staff = st;
     (['sort', 'reverify', 'branch'] as const).forEach(p => {
-      if (st[p] > c.stations[p]) W.push({ key: 'w.staffGtStations', params: { process: p, shift: s.name, staff: st[p], stations: c.stations[p] } });
+      const lim = p === 'sort' && w.sorting.type === 'sorter' ? w.sorting.sorter.inductionPoints : c.stations[p];
+      if (st[p] > lim) W.push({ key: 'w.staffGtStations', params: { process: p, shift: s.name, staff: st[p], stations: lim } });
     });
   });
 

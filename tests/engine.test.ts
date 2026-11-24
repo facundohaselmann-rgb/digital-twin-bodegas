@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Deque, percentile } from '../src/engine/core';
-import { simulate } from '../src/engine/simulate';
+import { nextProcess, simulate } from '../src/engine/simulate';
 import { jamaicaWarehouse } from '../src/model/defaults';
 import { normalize } from '../src/model/normalize';
 import { WEEK } from '../src/model/time';
@@ -154,7 +154,7 @@ describe('iteración 2', () => {
   it('sorter: no supera la capacidad de la máquina', () => {
     const w = base();
     w.sorting.type = 'sorter'; w.sorting.sorter.machinePerHour = 600; w.sorting.sorter.inductionPoints = 8;
-    w.shifts.forEach(s => (s.staff.sort = 8));
+    w.shifts.forEach(s => { s.staff.sort = 8; s.productivityPct = 150; }); // la productividad no acelera la máquina
     const r = simulate(w, { log: false });
     expect(r.sorter!.inducted).toBeGreaterThan(0);
     expect(r.sorter!.peakPerHour).toBeLessThanOrEqual(600 * 1.05);
@@ -179,6 +179,26 @@ describe('iteración 2', () => {
     expect(r.hospital.relabeled + r.hospital.destroyed).toBe(r.hospital.in);
     expect(r.events['RC-0'] + r.hospital.destroyed).toBe(r.totals.pkgs);
     expect(r.totals.unfinished).toBe(0);
+  });
+
+  it('CPT: un paquete que se fue en su camión cumple aunque la carga termine después de la hora de salida', () => {
+    const w = base();
+    // cada carga empieza al llegar el camión y termina 1 min después de su salida programada
+    w.outboundLoadWindowMin = 1; w.times.load = { min: 2, mode: 2, max: 2 };
+    w.multiskill.changeMin = 0; w.multiskill.bufferMin = 0;
+    w.shifts.forEach(s => (s.staff.load = 10));
+    const r = simulate(w, { log: false });
+    r.groups.filter(g => g.dest !== 'branch').forEach(g => expect(g.cpt.pct).toBeGreaterThan(0.5)); // antes del arreglo daba ~0 %
+  });
+
+  it('multiskill: vuelve a su puesto, la carga va primero y después el orden de ayuda', () => {
+    const order = ['unload', 'decon', 'sort', 'hospital', 'reverify', 'branch', 'load'] as const;
+    const help = (...ps: string[]) => (p: string) => ps.includes(p);
+    expect(nextProcess('unload', 'sort', help('unload', 'load'), help('sort'), order)).toBe('unload'); // vuelve aunque donde está haya trabajo
+    expect(nextProcess('unload', 'sort', help('load'), help('sort'), order)).toBe('sort');            // se queda si hay trabajo
+    expect(nextProcess('unload', 'sort', help('decon', 'load'), help(), order)).toBe('load');          // camión esperando primero
+    expect(nextProcess('unload', 'sort', help('branch', 'decon'), help(), order)).toBe('decon');       // después el orden de ayuda
+    expect(nextProcess('unload', 'sort', help(), help(), order)).toBe('sort');                         // nada que hacer: se queda
   });
 
   it('CPT: con más tiempo esperado de procesamiento, más paquetes a tiempo', () => {

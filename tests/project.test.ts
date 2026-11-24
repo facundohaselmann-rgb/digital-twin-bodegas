@@ -31,6 +31,11 @@ describe('archivo de proyecto', () => {
     expect(x.routes.windows).toHaveLength(1);
     expect(x.routes.windows[0].first).toBe('15:30');
   });
+  it('con sorter, avisa si hay más personas en sorting que puntos de inducción', () => {
+    const w = jamaicaWarehouse();
+    w.sorting.type = 'sorter'; w.sorting.sorter.inductionPoints = 2; w.shifts[0].staff.sort = 3; w.capacity.stations.sort = 4;
+    expect(normalize(w).some(x => x.key === 'w.staffGtStations' && x.params?.stations === 2)).toBe(true);
+  });
   it('la bodega en blanco es válida y simulable', () => {
     const w = blankWarehouse();
     const warnings = normalize(w);
