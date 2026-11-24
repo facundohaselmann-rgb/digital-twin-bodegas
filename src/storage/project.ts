@@ -2,6 +2,8 @@
    carpeta elegida (por ejemplo, la carpeta de Google Drive para escritorio)
    con la File System Access API; en otros navegadores se descargan. */
 import type { Project } from '../model/types';
+import { jamaicaWarehouse } from '../model/defaults';
+import { normalize } from '../model/normalize';
 
 /* Tipos mínimos de la File System Access API (no incluidos en lib.dom de TS). */
 interface FsWritable { write(data: string): Promise<void>; close(): Promise<void> }
@@ -20,6 +22,9 @@ export function parseProject(text: string): Project {
   const o = JSON.parse(text);
   if (!o || o.format !== 'dtwin' || !o.warehouse) throw new Error('invalid');
   if (o.version !== 2) throw new Error('version');
+  // completa lo que falte con valores por defecto y valida; si no se puede, el archivo se rechaza
+  o.warehouse = { ...jamaicaWarehouse(), ...o.warehouse };
+  normalize(o.warehouse);
   return o as Project;
 }
 

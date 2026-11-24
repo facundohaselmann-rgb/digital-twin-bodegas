@@ -251,7 +251,7 @@ function GroupsCard() {
             <Field label={t('cfg.share')}><Num path={`groups.${i}.sharePct`} min={0} max={100} /></Field>
             <Field label={t('cfg.dest')}><Select path={`groups.${i}.dest`} options={[['stageout', t('cfg.destStage')], ['branch', t('cfg.destBranch')]]} /></Field>
             <Check path={`groups.${i}.reverify`} label={t('cfg.reverify')} />
-            <button class="x" title={t('remove')} onClick={() => { if (confirm(t('cfg.confirmDelGroup', { name: g.name }))) update(o => o.groups.splice(i, 1)); }}>×</button>
+            <button class="x" title={t('remove')} onClick={() => { if (w.groups.length > 1 && confirm(t('cfg.confirmDelGroup', { name: g.name }))) update(o => o.groups.splice(i, 1)); }}>×</button>
           </div>
           <div class="svcs">
             <span class="hint">{t('cfg.services')}:</span>

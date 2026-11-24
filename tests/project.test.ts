@@ -14,6 +14,14 @@ describe('archivo de proyecto', () => {
     expect(() => parseProject('{"hola":1}')).toThrow();
     expect(() => parseProject('no es json')).toThrow();
   });
+  it('un archivo incompleto se completa al abrirlo; uno roto se rechaza', () => {
+    const p = newProject(jamaicaWarehouse()) as unknown as { warehouse: Record<string, unknown> };
+    delete p.warehouse.capacity;
+    const q = parseProject(JSON.stringify(p));
+    expect(q.warehouse.capacity.basketPkgs).toBeGreaterThan(0);
+    p.warehouse.capacity = null;
+    expect(() => parseProject(JSON.stringify(p))).toThrow();
+  });
   it('la bodega en blanco es válida y simulable', () => {
     const w = blankWarehouse();
     const warnings = normalize(w);

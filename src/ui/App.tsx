@@ -27,6 +27,7 @@ export function App() {
   const [dirty, setDirty] = useState(false);
   const [run, setRun] = useState<Run | null>(null);
   const [running, setRunning] = useState(false);
+  const [error, setError] = useState('');
   const [tab, setTab] = useState<Tab>(() => { try { return (localStorage.getItem('dtw-tab') as Tab) || 'plan'; } catch { return 'plan'; } });
   const [toast, setToast] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
@@ -42,15 +43,20 @@ export function App() {
   useEffect(() => {
     const id = setTimeout(() => {
       autosave(project);
-      const w = structuredClone(project.warehouse);
-      const warnings = normalize(w);
       const my = ++seq.current;
-      setRunning(true);
-      runSimulation(w).then(res => {
-        if (my !== seq.current) return;
-        setRun({ w, r: res.r, warnings: [...warnings, ...res.r.warnings], ms: res.ms });
-        setRunning(false);
-      }).catch(() => setRunning(false));
+      // si algo falla no se muestran resultados viejos como si fueran de esta configuración
+      const fail = (e: unknown) => { if (my !== seq.current) return; setRun(null); setError(String(e)); setRunning(false); };
+      try {
+        const w = structuredClone(project.warehouse);
+        const warnings = normalize(w);
+        setRunning(true);
+        runSimulation(w).then(res => {
+          if (my !== seq.current) return;
+          setRun({ w, r: res.r, warnings: [...warnings, ...res.r.warnings], ms: res.ms });
+          setError('');
+          setRunning(false);
+        }).catch(fail);
+      } catch (e) { fail(e); }
     }, 200);
     return () => clearTimeout(id);
   }, [project]);
@@ -126,6 +132,7 @@ export function App() {
         <span class="runinfo">{running ? t('run.running') : run ? t('run.info', { pkgs: nf(run.r.totals.pkgs), ms: nf(run.ms), seed: run.r.seed }) : ''}</span>
       </header>
       <main>
+        {error && <div class="warns"><div class="warn">⚠ {t('run.error', { msg: error })}</div></div>}
         {run && run.warnings.length > 0 && <div class="warns">{run.warnings.map(x => <div class="warn">⚠ {warnText(x)}</div>)}</div>}
         {run && tab === 'plan' && <PlanTab key={lang} w={run.w} r={run.r} />}
         {run && tab === 'results' && <ResultsTab w={run.w} r={run.r} />}
