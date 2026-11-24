@@ -1,5 +1,5 @@
-import { COST_CATEGORIES, LEGS, PROCESSES, TIME_KEYS, ZONE_KINDS, type Days, type Layout, type TravelMode, type ProcessKey, type Routes, type Warehouse, type Warning, type PackageProfile } from './types';
-import { DEFAULT_DISCREPANCIES, DEFAULT_SORTER, DEFAULT_TIMES, MON_SAT, defaultFixedCosts, uid } from './defaults';
+import { COST_CATEGORIES, LEGS, PROCESSES, STAFFED, TIME_KEYS, ZONE_KINDS, type Days, type Layout, type TravelMode, type ProcessKey, type Routes, type Warehouse, type Warning, type PackageProfile } from './types';
+import { DEFAULT_DISCREPANCIES, DEFAULT_SORTER, DEFAULT_TIMES, MON_SAT, defaultFixedCosts, defaultReturns, uid } from './defaults';
 import { hm } from './time';
 import { DEFAULT_TRAVEL, syncLayout } from './layout';
 
@@ -124,8 +124,9 @@ export function normalize(w: Warehouse): Warning[] {
     maxKg: num(sr.maxKg, 30, 0.1, 1e4), maxLengthCm: num(sr.maxLengthCm, 80, 1, 1e4), maxWidthCm: num(sr.maxWidthCm, 60, 1, 1e4), maxHeightCm: num(sr.maxHeightCm, 60, 1, 1e4),
     noReadPct: num(sr.noReadPct, 0, 0, 100) } };
   w.hospital = { exceptionPct: num(w.hospital?.exceptionPct, 0, 0, 100), relabelPct: num(w.hospital?.relabelPct, 75, 0, 100) };
-  const pr = (w.multiskill?.priority ?? []).filter(p => (PROCESSES as readonly string[]).includes(p));
-  w.multiskill = { bufferMin: num(w.multiskill?.bufferMin, 10, 0, 240), changeMin: num(w.multiskill?.changeMin, 5, 0, 240), priority: [...new Set([...pr, ...PROCESSES])] };
+  // retornos no entra en el orden de ayuda: siempre va último (baja prioridad)
+  const pr = (w.multiskill?.priority ?? []).filter(p => (STAFFED as readonly string[]).includes(p));
+  w.multiskill = { bufferMin: num(w.multiskill?.bufferMin, 10, 0, 240), changeMin: num(w.multiskill?.changeMin, 5, 0, 240), priority: [...new Set([...pr, ...STAFFED])] };
   w.cptLeadMin = num(w.cptLeadMin, 240, 0, 7 * 1440);
   const d = w.discrepancies ?? DEFAULT_DISCREPANCIES, mp = d.missortPct ?? DEFAULT_DISCREPANCIES.missortPct;
   w.discrepancies = { customsPct: num(d.customsPct, 0, 0, 100), postmanPct: num(d.postmanPct, 0, 0, 100), postmanFoundPct: num(d.postmanFoundPct, 50, 0, 100),
@@ -139,6 +140,12 @@ export function normalize(w: Warehouse): Warning[] {
     speeds: { walk: num(sp.walk, 1.2, 0.05, 20), cart: num(sp.cart, 1, 0.05, 20), jack: num(sp.jack, 0.8, 0.05, 20) },
     handleSec: num(tv.handleSec, 30, 0, 3600),
     modes: Object.fromEntries(LEGS.map(l => [l, mode(md[l], DEFAULT_TRAVEL.modes[l])])) as typeof DEFAULT_TRAVEL.modes,
+  };
+  const rr = w.returns ?? defaultReturns(w.inbound[0]?.pkgsPerBox ?? 60), r2 = rr.rt2 ?? defaultReturns(60).rt2;
+  w.returns = {
+    postmanPct: num(rr.postmanPct, 2, 0, 100), branchPct: num(rr.branchPct, 2, 0, 100), pickupPct: num(rr.pickupPct, 25, 0, 99.9),
+    holdDays: int(rr.holdDays, 14, 1, 120), destroyPct: num(rr.destroyPct, 50, 0, 100), pkgsPerBox: int(rr.pkgsPerBox, 60, 1, 10000),
+    shelfCapacity: int(rr.shelfCapacity, 0, 0, 1e6), rt2: { day: int(r2.day, 4, 0, 6), time: time(r2.time, '15:00'), maxBoxes: int(r2.maxBoxes, 10, 1, 10000) },
   };
   w.layout = layout(w.layout);
   syncLayout(w);
@@ -158,6 +165,7 @@ export function normalize(w: Warehouse): Warning[] {
     s.overtimeHours = s.night ? num(s.overtimeHours, 0, 0, 24) : 0;
     const st = (s.staff ?? {}) as Record<ProcessKey, number>;
     PROCESSES.forEach(p => (st[p] = int(st[p], 0, 0, 1000)));
+    st.returns = 0; // sin personal fijo
     s.staff = st;
     (['sort', 'reverify', 'branch'] as const).forEach(p => {
       const lim = p === 'sort' && w.sorting.type === 'sorter' ? w.sorting.sorter.inductionPoints : c.stations[p];

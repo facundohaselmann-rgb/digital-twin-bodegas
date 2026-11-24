@@ -11,7 +11,7 @@ export const DEFAULT_TRAVEL: Travel = {
 const r1 = (x: number): number => Math.round(x * 10) / 10;
 const zone = (kind: ZoneKind, ref: string, x: number, y: number, w: number, h: number): Zone => ({ kind, ref, x: r1(x), y: r1(y), w: r1(w), h: r1(h) });
 
-/** Disposición por defecto (50 × 25 m), la misma del plano esquemático de la presentación de Jamaica. */
+/** Disposición por defecto (50 × 30 m): la del plano esquemático de la presentación de Jamaica, más una franja de retornos abajo. */
 export function autoLayout(w: Warehouse): Layout {
   const so = w.groups.filter(g => g.dest !== 'branch'), br = w.groups.filter(g => g.dest === 'branch');
   const zones: Zone[] = [
@@ -34,8 +34,10 @@ export function autoLayout(w: Warehouse): Layout {
     const y = 1.8 + k * (laneH + 0.2);
     zones.push(zone('stage', g.id, 35.3, y, 14.2, laneH), zone('outDoor', g.id, 49.5, y + 0.15, 0.5, Math.max(0.3, laneH - 0.3)));
   });
-  if (br.length) zones.push(zone('branch', '', 31.5, 14.5, 18, 10), zone('exit', '', 49.5, 18.5, 0.5, 3));
-  return { widthM: 50, heightM: 25, zones };
+  if (br.length) zones.push(zone('branch', '', 31.5, 14.5, 18, 10), zone('exit', '', 49.5, 18.5, 0.5, 3), zone('shelf', '', 31.5, 24.5, 9, 5));
+  // retornos al lado de la estantería (los vencidos pasan sin viaje) y su puerta RT-2 en la pared
+  zones.push(br.length ? zone('returns', '', 40.5, 24.5, 9, 5) : zone('returns', '', 31.5, 24.5, 18, 5), zone('rt2Door', '', 49.5, 25.5, 0.5, 3));
+  return { widthM: 50, heightM: 30, zones };
 }
 
 /** Crea la disposición si la bodega no tiene (proyectos anteriores a la iteración 4).
@@ -62,6 +64,9 @@ export function syncLayout(w: Warehouse): void {
   if (!w.layout) return;
   const have = new Map(w.layout.zones.map(z => [zoneKey(z), z]));
   w.layout.zones = autoLayout(w).zones.map(a => have.get(zoneKey(a)) ?? a);
+  // una zona nueva puede caer fuera de una bodega dibujada más chica (p. ej. retornos en un layout de 50 × 25)
+  w.layout.widthM = Math.max(w.layout.widthM, ...w.layout.zones.map(z => z.x + z.w));
+  w.layout.heightM = Math.max(w.layout.heightM, ...w.layout.zones.map(z => z.y + z.h));
 }
 
 /** Distancia en ángulo recto entre los bordes más cercanos de dos zonas (0 si se tocan o se superponen).
@@ -83,6 +88,10 @@ export interface Distances {
   second: number[];
   /** Por grupo de Stage out: carril → puerta de su camión. */
   stageDock: number[];
+  /** Retornos: Branch → estantería (atención de clientes), estantería → retornos (vencidos), hospital → retornos, retornos → puerta RT-2. */
+  shelfWalk: number; expired: number; hospRet: number; rt2: number;
+  /** Por grupo de Stage out: puerta de su camión → retornos (devoluciones de sucursales). */
+  branchRet: number[];
   /** Entre procesos, para el cambio de puesto. */
   change: Record<ProcessKey, Record<ProcessKey, number>>;
 }
@@ -97,7 +106,7 @@ export function distances(w: Warehouse): Distances {
     const x = Math.min(...stages.map(z => z.x)), y = Math.min(...stages.map(z => z.y));
     return { kind: 'stage', ref: '', x, y, w: Math.max(...stages.map(z => z.x + z.w)) - x, h: Math.max(...stages.map(z => z.y + z.h)) - y };
   })() : undefined;
-  const P: Record<ProcessKey, Zone | undefined> = { unload: find('inbound'), decon: find('decon'), sort: find('sort'), hospital: find('hospital'), reverify: find('reverify'), branch: find('branch'), load: loadZone };
+  const P: Record<ProcessKey, Zone | undefined> = { unload: find('inbound'), decon: find('decon'), sort: find('sort'), hospital: find('hospital'), reverify: find('reverify'), branch: find('branch'), load: loadZone, returns: find('returns') };
   const keys = Object.keys(P) as ProcessKey[];
   const change = Object.fromEntries(keys.map(a => [a, Object.fromEntries(keys.map(b => [b, zoneGap(P[a], P[b])]))])) as Distances['change'];
   const next = (g: Warehouse['groups'][number]): Zone | undefined => (g.dest === 'branch' ? P.branch : find('stage', g.id));
@@ -108,6 +117,8 @@ export function distances(w: Warehouse): Distances {
     first: w.groups.map(g => zoneGap(find('group', g.id), g.reverify ? P.reverify : next(g))),
     second: w.groups.map(g => (g.reverify ? zoneGap(P.reverify, next(g)) : 0)),
     stageDock: w.groups.map(g => zoneGap(find('stage', g.id), find('outDoor', g.id))),
+    shelfWalk: zoneGap(P.branch, find('shelf')), expired: zoneGap(find('shelf'), P.returns), hospRet: zoneGap(P.hospital, P.returns), rt2: zoneGap(P.returns, find('rt2Door')),
+    branchRet: w.groups.map(g => zoneGap(find('outDoor', g.id), P.returns)),
     change,
   };
 }

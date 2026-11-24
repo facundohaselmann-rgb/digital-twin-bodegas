@@ -17,13 +17,15 @@ export interface PlayState {
   lane: number[]; lanePk: number[]; tk: number[]; tkPk: number[]; tkLeft: (number | null)[];
   route: number[]; pm: boolean[];
   hos: number; hosR: number; hosD: number;
+  /** Retornos: paquetes en estantería, esperando RT-1, cajas llenas y camión RT-2 en la puerta. */
+  shelf: number; rtq: number; boxes: number; rt2: number;
 }
 
 export function freshState(w: Warehouse): PlayState {
   const n = w.groups.length, R = w.routes.count;
   return { inDoor: 0, stB: 0, stU: 0, stL: 0, openB: 0, openU: 0, unl: 0, trucks: 0, sorted: 0, rv: 0, br: 0, rc0: 0, picked: 0,
     bk: {}, closed: {}, lane: new Array(n).fill(0), lanePk: new Array(n).fill(0), tk: new Array(n).fill(0), tkPk: new Array(n).fill(0), tkLeft: new Array(n).fill(null),
-    route: new Array(R).fill(0), pm: new Array(R).fill(false), hos: 0, hosR: 0, hosD: 0 };
+    route: new Array(R).fill(0), pm: new Array(R).fill(false), hos: 0, hosR: 0, hosD: 0, shelf: 0, rtq: 0, boxes: 0, rt2: 0 };
 }
 
 export type Fx = (kind: 'sort' | 'stage' | 'load' | 'route', a: string | number, b?: string | null) => void;
@@ -51,6 +53,15 @@ export function apply(S: PlayState, e: LogEv, fx?: Fx): void {
     case 'otD': { const g = e.g as number; S.tk[g] = 0; S.tkLeft[g] = e.t; break; }
     case 'hosIn': S.hos++; break;
     case 'hosOut': S.hos--; if (e.k === 'r') S.hosR++; else S.hosD++; break;
+    case 'shelf0': S.shelf = n; break;
+    case 'dv1': S.shelf += n; break;
+    case 'cust': S.shelf--; break;
+    case 'exp': S.shelf -= n; break;
+    case 'rtIn': S.rtq += n; break;
+    case 'rt1': S.rtq--; break;
+    case 'box': S.boxes++; break;
+    case 'rt2A': S.boxes -= n; S.rt2 = 1; break;
+    case 'rt2D': S.rt2 = 0; break;
   }
 }
 
@@ -247,6 +258,22 @@ export function buildPlan(svg: SVGSVGElement, w: Warehouse, bg: PlanBackground |
     h += `<rect class="p-dock" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="1"/>`;
     h += sd === 'r' ? `<text class="p-az" x="${W + 8}" y="${r.y + r.h / 2 + 3}" style="font-size:9px">${t('plan.exit')}</text>` : `<text class="p-az" x="${r.x}" y="${sd === 't' ? r.y - 4 : r.y + r.h + 12}" style="font-size:9px">${t('plan.exit')}</text>`;
   }
+  /* retornos: estantería de retiro (LM-4), RT-1 con sus cajas y la puerta del camión RT-2 */
+  const zsh = Z('shelf');
+  if (zsh) { const r = R(zsh); h += area(r, t('plan.shelf'), t('plan.shelfSub')) + `<text class="p-val" id="shf" x="${r.x + 7}" y="${r.y + 46}"></text>`; }
+  const zrt = Z('returns');
+  if (zrt) {
+    const r = R(zrt);
+    h += area(r, t('plan.returns'), t('plan.returnsSub')) + `<text class="p-md" id="rtq" x="${r.x + 7}" y="${r.y + 42}"></text><text class="p-md" id="rtb" x="${r.x + 7}" y="${r.y + 56}"></text>`;
+    h += dots('returns', r.x + r.w - 46, r.y + 12, 4, 10);
+  }
+  const zr2 = Z('rt2Door');
+  if (zr2) {
+    const r = R(zr2), sd = side(zr2, L);
+    h += `<rect class="p-dock" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="1"/>`;
+    h += sd === 'r' ? `<text class="p-az" x="${W + 8}" y="${r.y + r.h / 2 - 2}" style="font-size:9px">RT-2</text><text class="p-sm" id="rt2" x="${W + 8}" y="${r.y + r.h / 2 + 10}"></text>`
+      : `<text class="p-az" x="${r.x}" y="${r.y - 4}" style="font-size:9px">RT-2</text><text class="p-sm" id="rt2" x="${r.x + 30}" y="${r.y - 4}"></text>`;
+  }
   if (!so.length) h += `<text class="p-sm" x="${W / 2}" y="${K * 6}" text-anchor="middle">${t('plan.noStage')}</text>`;
   if (!br.length) h += `<text class="p-sm" x="${W / 2}" y="${H - K * 5}" text-anchor="middle">${t('plan.noBranch')}</text>`;
   h += `<g id="fx"></g>`;
@@ -288,6 +315,10 @@ export function renderPlan(G: Geo, S: PlayState, tNow: number, w: Warehouse, r: 
   setTxt('opn', t('plan.opening', { n: S.openB + S.openU }));
   setTxt('hos', t('plan.inHospital', { n: nf(S.hos) }));
   setTxt('hosd', t('plan.hosOut', { r: nf(S.hosR), d: nf(S.hosD) }));
+  setTxt('shf', t('plan.shelfN', { n: nf(Math.max(0, S.shelf)) }));
+  setTxt('rtq', t('plan.rtQueue', { n: nf(Math.max(0, S.rtq)) }));
+  setTxt('rtb', t('plan.rtBoxes', { n: nf(Math.max(0, S.boxes)) }));
+  setTxt('rt2', S.rt2 ? t('plan.rt2Here') : '');
   Object.keys(G.bk).forEach(k => {
     const b = G.bk[k], c = Math.max(0, S.bk[k] ?? 0);
     const nb = c ? Math.ceil(c / cap) : 0, cur = c ? (c % cap || cap) : 0, fh = (b.h - 3) * cur / cap;

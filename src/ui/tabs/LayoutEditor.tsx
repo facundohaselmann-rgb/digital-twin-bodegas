@@ -151,6 +151,7 @@ export function LayoutEditor({ plan, onProject, onClose, say }: { plan: PlanBack
         <div class="tblwrap"><table>
           <tbody>
             <tr><td>{t('ed.dUnload')}</td><td class="n">{m(D.unloadDecon)}</td><td>{t('ed.dFeed')}</td><td class="n">{m(D.deconSort)}</td><td>{t('ed.dHospital')}</td><td class="n">{m(D.hospital)}</td><td>{t('ed.dExit')}</td><td class="n">{m(D.routeExit)}</td></tr>
+            <tr><td>{t('ed.dShelf')}</td><td class="n">{m(D.shelfWalk)}</td><td>{t('ed.dExpired')}</td><td class="n">{m(D.expired)}</td><td>{t('ed.dHospRet')}</td><td class="n">{m(D.hospRet)}</td><td>{t('ed.dRt2')}</td><td class="n">{m(D.rt2)}</td></tr>
           </tbody>
         </table></div>
         <div class="tblwrap"><table>

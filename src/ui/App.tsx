@@ -139,7 +139,7 @@ export function App() {
     <WhContext.Provider value={{ w: project.warehouse, update }}>
       <header>
         <div class="brand">
-          <h1>{t('app.title')}</h1>
+          <h1><svg class="mark" aria-hidden="true" viewBox="0 0 120 120"><rect x="34" y="6" width="80" height="80" rx="10" fill="none" stroke="#76bd1d" stroke-width="12" /><rect x="6" y="34" width="80" height="80" rx="10" fill="currentColor" /></svg>{t('app.title')}</h1>
           <small>{project.warehouse.name}{handle ? ` · ${handle.name}` : ''} <span class={'dirty ' + (dirty ? 'on' : '')}>{dirty ? '● ' + t('file.unsaved') : '✓ ' + t('file.saved')}</span></small>
         </div>
         <div class="filebar">

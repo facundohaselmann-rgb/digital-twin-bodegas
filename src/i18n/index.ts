@@ -4,7 +4,7 @@ export type Lang = 'es' | 'en';
 
 const D: Record<string, [string, string]> = {
   /* general */
-  'app.title': ['Digital Twin · Bodegas cross-dock', 'Digital Twin · Cross-dock warehouses'],
+  'app.title': ['MAT · Digital Twin de bodegas', 'MAT · Warehouse Digital Twin'],
   'app.sub': ['Dimensionamiento y eficiencia · horizonte semanal', 'Sizing and efficiency · weekly horizon'],
   'tab.plan': ['Plano y simulación', 'Floor plan & simulation'],
   'tab.results': ['Resultados', 'Results'],
@@ -46,6 +46,7 @@ const D: Record<string, [string, string]> = {
   'p.hospital': ['Hospital de paquetes', 'Package hospital'],
   'p.branch': ['Sorting en rutas', 'Route sorting'],
   'p.load': ['Carga de camiones', 'Truck loading'],
+  'p.returns': ['Retornos (baja prioridad)', 'Returns (low priority)'],
 
   /* advertencias */
   'w.mixSum': ['El camión "{truck}" tiene una mezcla que suma {sum}%; se normaliza a 100%.', 'Truck "{truck}" has a load mix adding up to {sum}%; normalized to 100%.'],
@@ -238,6 +239,29 @@ const D: Record<string, [string, string]> = {
   't.openBox': ['Apertura de caja', 'Open box'], 't.emptyUld': ['Vaciado de ULD', 'Empty ULD'], 't.sort': ['Scan 1 manual con PDA', 'Manual Scan 1 with handheld'], 't.sortPtl': ['Scan 1 Pick to Light', 'Scan 1 Pick to Light'], 't.induct': ['Inducción al sorter', 'Sorter induction'], 't.relabel': ['Reetiquetado en hospital', 'Hospital relabel'], 't.missortFix': ['Corrección de error de sorting', 'Missort correction'], 't.search': ['Búsqueda de faltante de cartero', 'Postman shortage search'],
   't.swap': ['Cambio de canasto lleno', 'Swap full basket'], 't.reverify': ['Escaneo de reverificación', 'Re-verification scan'], 't.container': ['Armado de contenedor', 'Build container'],
   't.branchSort': ['Sorting en rutas (app)', 'Route sorting (app)'], 't.load': ['Carga al camión', 'Load onto truck'], 't.handover': ['Entrega de ruta al cartero', 'Route handover to postman'],
+  /* retornos (iteración 5) */
+  't.dv1': ['DV-1: devolución del cartero (escaneo y estantería)', 'DV-1: postman return (scan and shelf)'], 't.custAttend': ['Atención de cliente que retira', 'Serve a customer pickup'],
+  't.rt1': ['RT-1: escaneo y caja de retorno o destrucción', 'RT-1: scan and return/destruction box'], 't.rt2Load': ['RT-2: carga de caja al camión', 'RT-2: load box onto truck'],
+  'per.customer': ['por cliente', 'per customer'],
+  'z.shelf': ['Estantería de retiro (LM-4)', 'Pickup shelf (LM-4)'], 'z.returns': ['Retornos (RT-1)', 'Returns (RT-1)'], 'z.rt2Door': ['Puerta RT-2', 'RT-2 door'],
+  'ed.dShelf': ['Branch → estantería', 'Branch → shelf'], 'ed.dExpired': ['Estantería → retornos', 'Shelf → returns'], 'ed.dHospRet': ['Hospital → retornos', 'Hospital → returns'], 'ed.dRt2': ['Retornos → puerta RT-2', 'Returns → RT-2 door'],
+  'plan.shelf': ['ESTANTERÍA', 'SHELF'], 'plan.shelfSub': ['retiro por clientes (LM-4)', 'customer pickup (LM-4)'], 'plan.shelfN': ['{n} paquetes', '{n} packages'],
+  'plan.returns': ['RETORNOS', 'RETURNS'], 'plan.returnsSub': ['RT-1 · baja prioridad', 'RT-1 · low priority'], 'plan.rtQueue': ['{n} por clasificar', '{n} to sort'], 'plan.rtBoxes': ['{n} cajas llenas', '{n} full boxes'], 'plan.rt2Here': ['camión cargando', 'truck loading'],
+  'cfg.returns': ['Retornos', 'Returns'], 'cfg.returnsSub': ['Devoluciones de carteros (DV-1 → estantería LM-4), de sucursales y del hospital. RT-1 y RT-2 son de baja prioridad: los hace quien está ocioso.', 'Postman returns (DV-1 → LM-4 shelf), branch returns and hospital destruction. RT-1 and RT-2 are low priority: done by idle staff.'],
+  'cfg.retPostman': ['% que devuelve el cartero', '% returned by postmen'], 'cfg.retBranch': ['% que vuelve de sucursales', '% returned by branches'], 'cfg.retDestroy': ['% a destrucción en RT-1', '% to destruction in RT-1'],
+  'cfg.retPickup': ['% retirado por clientes', '% picked up by customers'], 'cfg.retPickupHint': ['Dentro de los días máximos en estantería', 'Within the maximum days on shelf'], 'cfg.retHold': ['Días máximos en estantería (corridos)', 'Max days on shelf (calendar)'],
+  'cfg.retShelf': ['Posiciones de la estantería', 'Shelf positions'], 'cfg.retShelfHint': ['0 = sin límite; si se supera, avisa', '0 = no limit; warns if exceeded'], 'cfg.retBox': ['Paquetes por caja (RT-1)', 'Packages per box (RT-1)'],
+  'cfg.retDay': ['Día del camión RT-2', 'RT-2 truck day'], 'cfg.retTime': ['Hora', 'Time'], 'cfg.retMaxBoxes': ['O antes, al juntar (cajas)', 'Or earlier, at (boxes)'],
+  'cfg.returnsHint': ['El cartero devuelve en su próximo retiro y el DV-1 se hace antes del control de ruta. Las sucursales devuelven en uno de cada dos camiones. Los clientes llegan durante el turno mañana y los atiende quien está en despacho de carteros o alguien ocioso. Lo que no se retira pasa a RT-1 al vencer; lo destruido en el hospital va directo a la caja de destrucción.', 'Postmen return at their next pickup and DV-1 happens before route control. Branches return on every second truck. Customers arrive during the morning shift and are served by route dispatch staff or idle staff. What is not picked up goes to RT-1 when it expires; hospital destruction goes straight to the destruction box.'],
+  'res.returns': ['Retornos', 'Returns'], 'res.returnsSub': ['Régimen estable: las semanas anteriores fueron iguales a esta. Un paquete pasa en promedio {days} días en la estantería.', 'Steady state: previous weeks were like this one. A package spends {days} days on the shelf on average.'],
+  'res.rIn': ['Paquetes retornados', 'Returned packages'], 'res.rInSub': ['{dv1} de carteros (DV-1) · {br} de sucursales', '{dv1} from postmen (DV-1) · {br} from branches'],
+  'res.rShelf': ['Estantería (promedio)', 'Shelf (average)'], 'res.rShelfSub': ['máximo {max} paquetes', 'peak {max} packages'], 'res.rShelfCap': ['capacidad {cap}', 'capacity {cap}'],
+  'res.rPicked': ['Retirados por clientes', 'Picked up by customers'], 'res.rPickedSub': ['{exp} vencidos a RT-1 · {h} h atendiendo', '{exp} expired to RT-1 · {h} h serving'],
+  'res.rRt1': ['Clasificados en RT-1', 'Sorted in RT-1'], 'res.rRt1Sub': ['{d} a destrucción ({h} del hospital) · {b} a retorno', '{d} to destruction ({h} from hospital) · {b} to return'],
+  'res.rRt2': ['Viajes RT-2', 'RT-2 trips'], 'res.rRt2Sub': ['{boxes} cajas llenas en la semana', '{boxes} full boxes this week'],
+  'res.rCost': ['Costo por paquete retornado', 'Cost per returned package'], 'res.rCostSub': ['{usd} USD de mano de obra en la semana', '{usd} USD of labor this week'],
+  'k.returnCost': ['Costo por paquete retornado (USD)', 'Cost per returned package (USD)'],
+  'w.shelfFull': ['La estantería llega a {max} paquetes y tiene {cap} posiciones.', 'The shelf reaches {max} packages and has {cap} positions.'],
   /* layout y traslados (iteración 4) */
   'z.inbound': ['Entrada', 'Inbound'], 'z.decon': ['Desconsolidación', 'Deconsolidation'], 'z.sort': ['Sorting (Scan 1)', 'Sorting (Scan 1)'], 'z.hospital': ['Hospital', 'Hospital'],
   'z.reverify': ['Reverificación', 'Re-verification'], 'z.group': ['Canastos', 'Baskets'], 'z.stage': ['Stage out', 'Stage out'], 'z.outDoor': ['Puerta', 'Door'], 'z.branch': ['Branch · rutas', 'Branch · routes'], 'z.exit': ['Salida carteros', 'Postmen exit'],

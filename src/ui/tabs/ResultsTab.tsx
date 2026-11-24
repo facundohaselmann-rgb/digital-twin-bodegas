@@ -7,7 +7,7 @@ import { dayName, getLang, nf, pct, t } from '../../i18n';
 import { LineChart } from '../components/LineChart';
 import { download } from '../../storage/project';
 
-const SERIES = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--s5)', 'var(--s6)', 'var(--s7)'];
+const SERIES = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--s5)', 'var(--s6)', 'var(--s7)', 'var(--s8)'];
 const dt = (x: number | null) => (x == null ? '—' : `${dayName(Math.floor(x / 1440))} ${fmtHM(x)}`);
 const hrs = (m: number) => nf(m / 60, 1);
 const hours = (x: number) => (isFinite(x) ? `${nf(x / 60, 1)} h` : '—');
@@ -68,6 +68,17 @@ export function ResultsTab({ w, r, rep, cmp }: { w: Warehouse; r: SimResult; rep
           </table></div>
           <h3 style={{ marginTop: '12px' }}>{t('res.cByProcess')}</h3>
           <div class="tblwrap"><table><tbody>{PROCESSES.filter(p => cost.byProcess[p] > 0).map(p => <tr><td>{t('p.' + p)}</td><td class="n">{usd(cost.byProcess[p])}</td><td class="n">{nf(cost.byProcess[p] / r.totals.inbound, 3)}</td></tr>)}</tbody></table></div>
+        </div>
+      </div>
+
+      <div class="card mb"><h2>{t('res.returns')}</h2><div class="sub">{t('res.returnsSub', { days: nf(r.returns.stayDays, 1) })}</div>
+        <div class="cards" style={{ marginBottom: 0 }}>
+          <div class="stat"><div class="l">{t('res.rIn')}</div><div class="v">{nf(r.returns.dv1 + r.returns.branch)}</div><div class="d">{t('res.rInSub', { dv1: nf(r.returns.dv1), br: nf(r.returns.branch) })}</div></div>
+          <div class="stat"><div class="l">{t('res.rShelf')}</div><div class="v">{nf(r.returns.shelfAvg)}</div><div class="d">{t('res.rShelfSub', { max: nf(r.returns.shelfMax) })}{w.returns.shelfCapacity ? ' · ' + t('res.rShelfCap', { cap: nf(w.returns.shelfCapacity) }) : ''}</div></div>
+          <div class="stat"><div class="l">{t('res.rPicked')}</div><div class="v">{nf(r.returns.picked)}</div><div class="d">{t('res.rPickedSub', { exp: nf(r.returns.expired), h: hrs(r.returns.custMin) })}</div></div>
+          <div class="stat"><div class="l">{t('res.rRt1')}</div><div class="v">{nf(r.returns.rt1)}</div><div class="d">{t('res.rRt1Sub', { d: nf(r.returns.destroy), b: nf(r.returns.back), h: nf(r.returns.hospital) })}</div></div>
+          <div class="stat"><div class="l">{t('res.rRt2')}</div><div class="v">{nf(r.returns.trips)}</div><div class="d">{t('res.rRt2Sub', { boxes: nf(r.returns.boxes) })}</div></div>
+          <div class="stat"><div class="l">{t('res.rCost')}</div><div class="v">{nf(cost.perReturn, 3)} <small>USD</small></div><div class="d">{t('res.rCostSub', { usd: usd(cost.returns) })}</div></div>
         </div>
       </div>
 
@@ -196,6 +207,7 @@ function exportCSV(w: Warehouse, r: SimResult): void {
   line(t('res.kpiHospital'), r.hospital.in, r.hospital.relabeled, r.hospital.destroyed);
   rows.push('');
   line(t('res.kpiTravel'), 'km', r.travel.km, 'h', r.travel.hours);
+  line(t('res.returns'), t('res.rIn'), r.returns.dv1 + r.returns.branch, t('res.rPicked'), r.returns.picked, t('res.rRt1'), r.returns.rt1, t('res.rRt2'), r.returns.trips, t('res.rShelf'), r.returns.shelfAvg, t('res.rCost'), computeCost(r, w).perReturn);
   rows.push('');
   line(t('res.group'), t('res.arrival'), t('res.departure'), t('res.units'), t('res.pkgs'), 'm3', 'kg', t('res.left'), t('res.late') + ' (min)');
   r.outbound.forEach(o => line(o.group, dt(o.arrival), dt(o.departure), o.units, o.pkgs, o.m3, o.kg, o.leftPkgs, o.late));

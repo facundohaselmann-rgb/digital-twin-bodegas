@@ -2,7 +2,7 @@ import { useState } from 'preact/hooks';
 import { useWh } from '../store';
 import { Check, DaysToggle, Field, Num, Select, Text, Time } from '../components/inputs';
 import { nf, t } from '../../i18n';
-import { COST_CATEGORIES, LEGS, PROCESSES, TIME_KEYS, type Days, type TimeKey, type Warehouse } from '../../model/types';
+import { COST_CATEGORIES, LEGS, STAFFED, TIME_KEYS, type Days, type TimeKey, type Warehouse } from '../../model/types';
 import { MON_SAT, uid } from '../../model/defaults';
 import { SECOND_KEYS } from '../../engine/simulate';
 import { DAY, fmtHM, hm } from '../../model/time';
@@ -10,6 +10,7 @@ import { DAY, fmtHM, hm } from '../../model/time';
 const PER: Record<TimeKey, string> = {
   unloadBox: 'per.box', unloadUld: 'per.uld', unloadLoose: 'per.pkg', openBox: 'per.box', emptyUld: 'per.uld', sort: 'per.pkg',
   sortPtl: 'per.pkg', induct: 'per.pkg', relabel: 'per.pkg', missortFix: 'per.pkg', search: 'per.pkg', swap: 'per.basket', reverify: 'per.pkg', container: 'per.container', branchSort: 'per.pkg', load: 'per.unit', handover: 'per.route',
+  dv1: 'per.pkg', custAttend: 'per.customer', rt1: 'per.pkg', rt2Load: 'per.box',
 };
 
 export function ConfigTab() {
@@ -24,6 +25,7 @@ export function ConfigTab() {
       <ShiftsCard />
       <GroupsCard />
       <RoutesCard />
+      <ReturnsCard />
       <CapacityCard />
       <TravelCard />
       <TimesCard />
@@ -204,7 +206,7 @@ function ShiftsCard() {
             </div>
             <div class="frow" style={{ alignItems: 'center' }}>
               <DaysToggle path={`shifts.${i}.days`} />
-              <span class="hint">{t('cfg.shiftPeople', { n: PROCESSES.reduce((a, p) => a + (s.staff[p] || 0), 0) })}</span>
+              <span class="hint">{t('cfg.shiftPeople', { n: STAFFED.reduce((a, p) => a + (s.staff[p] || 0), 0) })}</span>
             </div>
             <div class="frow">
               <Field label={t('cfg.productivity')}><Num path={`shifts.${i}.productivityPct`} min={10} max={200} /></Field>
@@ -224,7 +226,7 @@ function ShiftsCard() {
             </div>
             <div class="sub" style={{ margin: '10px 0 4px' }}>{t('cfg.staff')}</div>
             <div class="staffgrid">
-              {PROCESSES.map(p => <Field label={t('p.' + p)}><Num path={`shifts.${i}.staff.${p}`} min={0} step={1} /></Field>)}
+              {STAFFED.map(p => <Field label={t('p.' + p)}><Num path={`shifts.${i}.staff.${p}`} min={0} step={1} /></Field>)}
             </div>
           </div>
         ))}
@@ -233,7 +235,7 @@ function ShiftsCard() {
         <button class="btn sm" onClick={() => update(o => {
           const last = o.shifts[o.shifts.length - 1];
           o.shifts.push(last ? { ...structuredClone(last), id: uid('t'), name: `${t('cfg.shiftName')} ${o.shifts.length + 1}`, night: false, overtimeHours: 0 }
-            : { id: uid('t'), name: `${t('cfg.shiftName')} 1`, days: [...MON_SAT] as Days, start: '06:00', end: '14:00', breaks: [], productivityPct: 100, costPerHour: 5, night: false, overtimeHours: 0, staff: { unload: 1, decon: 1, sort: 2, hospital: 0, reverify: 1, branch: 1, load: 1 } });
+            : { id: uid('t'), name: `${t('cfg.shiftName')} 1`, days: [...MON_SAT] as Days, start: '06:00', end: '14:00', breaks: [], productivityPct: 100, costPerHour: 5, night: false, overtimeHours: 0, staff: { unload: 1, decon: 1, sort: 2, hospital: 0, reverify: 1, branch: 1, load: 1, returns: 0 } });
         })}>{t('cfg.addShift')}</button>
       </div>
     </div>
@@ -354,6 +356,32 @@ function RoutesCard() {
         </div>
       ))}
       <button class="btn sm" onClick={() => update(o => o.routes.windows.push({ id: uid('v'), name: `${t('cfg.windowName')} ${o.routes.windows.length + 1}`, days: [...MON_SAT] as Days, first: '16:00', everyMin: 10 }))}>{t('cfg.addWindow')}</button>
+    </div>
+  );
+}
+
+function ReturnsCard() {
+  return (
+    <div class="card">
+      <h2>{t('cfg.returns')}</h2>
+      <div class="sub">{t('cfg.returnsSub')}</div>
+      <div class="frow">
+        <Field label={t('cfg.retPostman')}><Num path="returns.postmanPct" min={0} max={100} step={0.5} /></Field>
+        <Field label={t('cfg.retBranch')}><Num path="returns.branchPct" min={0} max={100} step={0.5} /></Field>
+        <Field label={t('cfg.retDestroy')}><Num path="returns.destroyPct" min={0} max={100} step={5} /></Field>
+      </div>
+      <div class="frow">
+        <Field label={t('cfg.retPickup')} hint={t('cfg.retPickupHint')}><Num path="returns.pickupPct" min={0} max={99} step={5} /></Field>
+        <Field label={t('cfg.retHold')}><Num path="returns.holdDays" min={1} step={1} /></Field>
+        <Field label={t('cfg.retShelf')} hint={t('cfg.retShelfHint')}><Num path="returns.shelfCapacity" min={0} step={10} /></Field>
+      </div>
+      <div class="frow">
+        <Field label={t('cfg.retBox')}><Num path="returns.pkgsPerBox" min={1} step={1} /></Field>
+        <Field label={t('cfg.retDay')}><Select path="returns.rt2.day" options={[0, 1, 2, 3, 4, 5, 6].map(d => [String(d), t('d' + d)])} /></Field>
+        <Field label={t('cfg.retTime')} w={120}><Time path="returns.rt2.time" /></Field>
+        <Field label={t('cfg.retMaxBoxes')}><Num path="returns.rt2.maxBoxes" min={1} step={1} /></Field>
+      </div>
+      <div class="hint">{t('cfg.returnsHint')}</div>
     </div>
   );
 }
