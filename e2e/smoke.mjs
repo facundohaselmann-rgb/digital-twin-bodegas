@@ -23,12 +23,42 @@ await pg.waitForTimeout(300);
 await shot('plan.png');
 await pg.click('.ctl .btn.pri'); await pg.waitForTimeout(1200); await pg.click('.ctl .btn.pri');
 await pg.click('nav button:nth-child(2)'); await pg.waitForTimeout(400); await shot('results.png');
-await pg.click('nav button:nth-child(4)'); await pg.waitForTimeout(300); await shot('config.png');
-// editar dotación del turno día (sorting = 1) y verificar que se re-simula
+await pg.click('nav button:nth-child(4)'); await pg.waitForTimeout(300);
+const sections = await pg.locator('.subnav button').count();
+if (sections !== 9) errs.push('Configuración debería tener 9 secciones: ' + sections);
+await pg.click('.subnav button:nth-child(4)'); await pg.waitForTimeout(300); await shot('config.png');
+// editar dotación del turno día (sorting = 1), verificar que se re-simula y deshacer
 const before = await pg.evaluate(() => document.querySelector('.runinfo')?.textContent);
 const inp = pg.locator('.shift').first().locator('.staffgrid input').nth(2);
+const v0 = await inp.inputValue();
 await inp.fill('1'); await inp.press('Tab');
 await pg.waitForFunction(b => document.querySelector('.runinfo')?.textContent !== b, before, { timeout: 10000 });
+await pg.click('.topbar button:has-text("↶")'); await pg.waitForTimeout(400);
+const v1 = await pg.locator('.shift').first().locator('.staffgrid input').nth(2).inputValue();
+console.log('deshacer: sorting', v0, '→ 1 →', v1);
+if (v1 !== v0) errs.push('deshacer no volvió al valor anterior');
+await inp.fill('1'); await inp.press('Tab'); await pg.waitForTimeout(300);
+// plano: desplegable de indicadores y panel de zona
+await pg.click('nav button:nth-child(1)'); await pg.waitForSelector('#plan g#fx', { state: 'attached' });
+await pg.click('.kpibar summary'); await pg.waitForTimeout(200);
+const kp = await pg.locator('.kpigrid .stat').count();
+const delta = await pg.locator('.kpigrid .delta').count();
+console.log('indicadores:', kp, '· con cambio frente a antes:', delta);
+if (kp !== 5) errs.push('el desplegable debería tener 5 indicadores');
+await pg.locator('#plan .zhit[data-zone^="sort:"]').click();
+await pg.waitForSelector('.zpanel', { timeout: 5000 });
+console.log('panel de zona:', await pg.locator('.zpanel h2').textContent());
+await shot('zone.png');
+// reporte A4
+await pg.click('nav button:nth-child(5)'); await pg.waitForSelector('.report .page', { timeout: 5000 });
+const pages = await pg.locator('.report .page').count();
+console.log('reporte: páginas', pages, '·', (await pg.locator('.rep-ctl textarea').inputValue()).slice(0, 60) + '…');
+if (pages < 7) errs.push('el reporte debería tener al menos 7 páginas');
+// la conclusión editada se conserva al ir a otra pestaña y volver
+await pg.fill('.rep-ctl textarea', 'Conclusión de prueba');
+await pg.click('nav button:nth-child(1)'); await pg.click('nav button:nth-child(5)'); await pg.waitForSelector('.rep-ctl textarea');
+if (await pg.locator('.rep-ctl textarea').inputValue() !== 'Conclusión de prueba') errs.push('se perdió la conclusión editada al cambiar de pestaña');
+await shot('report.png');
 // cambiar idioma
 await pg.click('.langsw button:nth-child(2)'); await pg.waitForTimeout(300);
 const navEn = await pg.evaluate(() => document.querySelector('nav')?.textContent);

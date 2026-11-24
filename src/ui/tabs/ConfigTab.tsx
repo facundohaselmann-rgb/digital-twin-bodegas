@@ -13,22 +13,70 @@ const PER: Record<TimeKey, string> = {
   dv1: 'per.pkg', custAttend: 'per.customer', rt1: 'per.pkg', rt2Load: 'per.box',
 };
 
-export function ConfigTab() {
+/** Las 9 secciones de Configuración, en orden. Cada tarjeta de campos está en exactamente una. */
+export const SECTIONS = ['general', 'inbound', 'groups', 'shifts', 'processes', 'returns', 'layout', 'costs', 'times'] as const;
+export type Section = typeof SECTIONS[number];
+/** Sección donde se corrige cada aviso de validación (los que no figuran son generales). */
+export const WARN_SECTION: Record<string, Section> = {
+  'w.mixSum': 'inbound', 'w.noInbound': 'inbound', 'w.noOutbound': 'groups', 'w.noGroups': 'groups', 'w.noShare': 'groups', 'w.shareSum': 'groups',
+  'w.noRouteDays': 'groups', 'w.noShifts': 'shifts', 'w.noStaff': 'shifts', 'w.staffGtStations': 'shifts', 'w.unfinished': 'shifts', 'w.shelfFull': 'returns',
+};
+
+export function ConfigTab({ section, onEditLayout }: { section: Section; onEditLayout: () => void }) {
+  const cards = {
+    general: <><GeneralCard /><ProfileCard /></>,
+    inbound: <InboundCard />,
+    groups: <><SortingCard /><GroupsCard /><CapacityCard /><RoutesCard /></>,
+    shifts: <ShiftsCard />,
+    processes: <><ProcessesCard /><DiscrepanciesCard /></>,
+    returns: <ReturnsCard />,
+    layout: <><LayoutCard onEdit={onEditLayout} /><TravelCard /></>,
+    costs: <CostsCard />,
+    times: <TimesCard />,
+  }[section];
   return (
-    <div class="cfg">
-      <GeneralCard />
-      <ProfileCard />
-      <ProcessesCard />
-      <DiscrepanciesCard />
-      <CostsCard />
-      <InboundCard />
-      <ShiftsCard />
-      <GroupsCard />
-      <RoutesCard />
-      <ReturnsCard />
-      <CapacityCard />
-      <TravelCard />
-      <TimesCard />
+    <>
+      <p class="hint mb">{t('sec.' + section + 'Sub')} {t('cfg.note')}</p>
+      <div class="cfg">{cards}</div>
+    </>
+  );
+}
+
+function LayoutCard({ onEdit }: { onEdit: () => void }) {
+  const { w } = useWh();
+  return (
+    <div class="card">
+      <h2>{t('cfg.layout')}</h2>
+      <div class="sub">{t(w.layout ? 'cfg.layoutSub' : 'cfg.layoutNone')}</div>
+      <button class="btn pri" onClick={onEdit}>{t('ed.open')}</button>
+    </div>
+  );
+}
+
+function SortingCard() {
+  const { w } = useWh();
+  return (
+    <div class="card wide">
+      <h2>{t('cfg.sorting')}</h2>
+      <div class="sub">{t('cfg.sortingSub')}</div>
+      <div class="frow">
+        <Field label={t('cfg.sortType')} w={260}><Select path="sorting.type" options={[['manual', t('cfg.stManual')], ['ptl', t('cfg.stPtl')], ['sorter', t('cfg.stSorter')]]} /></Field>
+      </div>
+      {w.sorting.type === 'sorter' && <>
+        <div class="frow">
+          <Field label={t('cfg.induction')}><Num path="sorting.sorter.inductionPoints" min={1} step={1} /></Field>
+          <Field label={t('cfg.machine')}><Num path="sorting.sorter.machinePerHour" min={1} step={100} /></Field>
+          <Field label={t('cfg.chutes')}><Num path="sorting.sorter.chutes" min={1} step={1} /></Field>
+          <Field label={t('cfg.noRead')}><Num path="sorting.sorter.noReadPct" min={0} max={100} /></Field>
+        </div>
+        <div class="frow">
+          <Field label={t('cfg.maxKg')}><Num path="sorting.sorter.maxKg" min={0.1} /></Field>
+          <Field label={t('cfg.maxL')}><Num path="sorting.sorter.maxLengthCm" min={1} /></Field>
+          <Field label={t('cfg.maxW')}><Num path="sorting.sorter.maxWidthCm" min={1} /></Field>
+          <Field label={t('cfg.maxH')}><Num path="sorting.sorter.maxHeightCm" min={1} /></Field>
+        </div>
+        <div class="hint">{t('cfg.sorterHint')}</div>
+      </>}
     </div>
   );
 }
@@ -394,24 +442,8 @@ function ProcessesCard() {
       <h2>{t('cfg.processes')}</h2>
       <div class="sub">{t('cfg.processesSub')}</div>
       <div class="frow">
-        <Field label={t('cfg.sortType')} w={260}><Select path="sorting.type" options={[['manual', t('cfg.stManual')], ['ptl', t('cfg.stPtl')], ['sorter', t('cfg.stSorter')]]} /></Field>
         <Field label={t('cfg.cptLead')} hint={t('cfg.cptHint')} w={420}><Num path="cptLeadMin" min={0} step={15} /></Field>
       </div>
-      {w.sorting.type === 'sorter' && <>
-        <div class="frow">
-          <Field label={t('cfg.induction')}><Num path="sorting.sorter.inductionPoints" min={1} step={1} /></Field>
-          <Field label={t('cfg.machine')}><Num path="sorting.sorter.machinePerHour" min={1} step={100} /></Field>
-          <Field label={t('cfg.chutes')}><Num path="sorting.sorter.chutes" min={1} step={1} /></Field>
-          <Field label={t('cfg.noRead')}><Num path="sorting.sorter.noReadPct" min={0} max={100} /></Field>
-        </div>
-        <div class="frow">
-          <Field label={t('cfg.maxKg')}><Num path="sorting.sorter.maxKg" min={0.1} /></Field>
-          <Field label={t('cfg.maxL')}><Num path="sorting.sorter.maxLengthCm" min={1} /></Field>
-          <Field label={t('cfg.maxW')}><Num path="sorting.sorter.maxWidthCm" min={1} /></Field>
-          <Field label={t('cfg.maxH')}><Num path="sorting.sorter.maxHeightCm" min={1} /></Field>
-        </div>
-        <div class="hint" style={{ marginBottom: '8px' }}>{t('cfg.sorterHint')}</div>
-      </>}
       <div class="frow">
         <Field label={t('cfg.exceptionPct')} hint={t('cfg.hospitalHint')}><Num path="hospital.exceptionPct" min={0} max={100} /></Field>
         <Field label={t('cfg.relabelPct')}><Num path="hospital.relabelPct" min={0} max={100} /></Field>

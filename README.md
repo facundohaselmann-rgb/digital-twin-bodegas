@@ -11,10 +11,10 @@ Funciona **100 % local y sin conexión**: es un único archivo HTML que se abre 
 1. Descargá [`releases/digital-twin-bodegas.html`](releases/digital-twin-bodegas.html). En GitHub: botón **Download raw file**.
 2. Guardalo en tu carpeta de **Google Drive para escritorio**, por ejemplo `Mi unidad/Digital Twin/`.
 3. Abrilo con doble clic en **Chrome**.
-4. **Nuevo → Desde plantilla Jamaica** (o **Bodega en blanco**), configurá la bodega en **Configuración**, dibujá la disposición con **✎ Editar plano** y mirá **Plano y simulación** y **Resultados**.
+4. **Nuevo → Desde plantilla Jamaica** (o **Bodega en blanco**) en el menú de la izquierda, configurá la bodega en **Configuración** (9 secciones), dibujá la disposición con **✎ Editar plano** y mirá **Plano y simulación** y **Resultados**. En el plano, tocá una zona para ver y editar sus parámetros.
 5. **Guardar** (Ctrl+S) crea un archivo `.dtwin` donde elijas. Si lo guardás en la carpeta de Drive, se sincroniza solo. **Abrir** lo recupera.
 
-Cada cambio se vuelve a simular al instante. El idioma (ES/EN) se cambia arriba a la derecha.
+Cada cambio se vuelve a simular al instante y se puede deshacer (↶ o Ctrl+Z, hasta 20 cambios). El idioma (ES/EN) se cambia abajo a la izquierda. Pensado para escritorio (ancho mínimo 1280 px).
 
 ## Qué modela
 
@@ -36,11 +36,12 @@ Cada cambio se vuelve a simular al instante. El idioma (ES/EN) se cambia arriba 
 | Costos (USD) | Mano de obra por horas pagadas y costo hora de cada turno, horas extra con multiplicador, costos fijos mensuales por categoría (alquiler, servicios, seguridad, limpieza, equipos, sistemas, seguros, supervisión) prorrateados a la semana, insumos. **Costo por paquete entrante** |
 | Corridas múltiples | 20 corridas con distintas semillas por defecto; cada KPI con media ± margen al 95 % |
 | Escenarios | Cada proyecto trae 3 escenarios (base, +20 % volumen y otro tipo de sorting). Se editan, duplican y comparan lado a lado |
-| Reporte | Exportar PDF con la impresión de Chrome ("Guardar como PDF") y CSV |
+| Reporte | Pestaña **Reporte**: A4 vertical con portada y 8 secciones a elección (resumen ejecutivo, escenarios, costos, CPT por grupo, plano, retornos, supuestos). La conclusión del resumen se arma sola con los resultados y se puede editar. Se exporta con la impresión de Chrome ("Guardar como PDF"). Resultados también se exportan a CSV |
 | Layout y plano | **✎ Editar plano** en la pestaña del plano: cada proceso, cada grupo de canastos, cada carril de Stage out, cada puerta de carga, Branch y la salida de carteros es una zona en metros que se arrastra y se redimensiona. El plano real se carga de fondo como **PDF** (se elige la página), **imagen** (PNG/JPG) o **CAD en DXF** (con sus medidas); la escala se fija marcando dos puntos de una medida conocida. El DWG se exporta antes como DXF o PDF. Cada escenario tiene su propia disposición; el plano de fondo es del proyecto |
 | Traslados | Distancia en ángulo recto entre los bordes más cercanos de cada zona (las zonas que se tocan se pasan la carga sin viaje; el recorrido dentro de una zona ya está en los tiempos estándar). Cada viaje suma ida y vuelta a la velocidad del medio (a pie 1,2 m/s, carro 1,0 m/s, transpaleta 0,8 m/s) más 30 s para tomar y dejar la carga. Sorting manual y Pick to Light: a pie hasta los canastos; sorter: la cinta lleva los paquetes. ULD: siempre en transpaleta. Cambio de puesto: 2 min más la caminata entre zonas. Resultado: km recorridos, horas de traslado y su parte del costo |
 | Retornos | El cartero devuelve un % de lo que se llevó (2 % por defecto) en su próximo retiro: el DV-1 se hace antes del control de ruta y los paquetes quedan en la estantería de retiro (LM-4). Los clientes retiran un % (25 %) dentro de los días máximos (14 corridos desde DV-1); llegan durante el turno mañana y los atiende quien está en despacho de carteros o alguien ocioso. Lo que vence pasa a RT-1. Las sucursales devuelven un % (2 %) en uno de cada dos camiones, directo a RT-1. Lo destruido en el hospital va a la caja de destrucción. RT-1 clasifica en cajas de destrucción o retorno (50/50) y el camión RT-2 pasa una vez por semana o al juntar N cajas. RT-1 y RT-2 son de baja prioridad: los hace quien está ocioso y no generan horas extra. La estantería se calcula en régimen estable (las semanas anteriores iguales a la simulada). Resultado: estantería promedio y máxima, días en estantería, retirados, vencidos, cajas, viajes RT-2 y costo por paquete retornado |
 | Plantillas | Jamaica (sorting manual con PDA, disposición del plano de la presentación original a 50 × 25 m), **Modelo** (genérica, Pick to Light y todas las funciones) y bodega en blanco |
+| Indicadores | En **Plano y simulación**, un desplegable con costo por paquete, CPT a tiempo, WI-2 → RC-0, utilización y horas extra, y cuánto cambió cada uno con el último cambio |
 | Resultados | CPT a tiempo por grupo, tiempo WI-2 → RC-0 (media, P90, P95, P98), utilización y cambios de puesto por turno, hospital, sorter, pendiente al cierre de cada turno, camiones de entrada y salida, eventos de Tracking, gráficos semanales, exportación a CSV |
 
 Los valores por defecto (volúmenes, tiempos, dotación, costos) son **supuestos estándar editables**. La estructura de grupos y servicios viene de la operación de Jamaica.
@@ -68,7 +69,8 @@ src/
   plan/       plano SVG animado desde el layout, reproductor del log e importadores de plano (PDF, imagen, DXF)
   storage/    archivos de proyecto .dtwin (File System Access API) y autoguardado
   i18n/       textos en español e inglés
-  ui/         interfaz (Preact): pestañas de plano, resultados y configuración
+  report/     conclusión automática del reporte
+  ui/         interfaz (Preact): menú lateral, plano, resultados, escenarios, configuración y reporte
 tests/        tests con Vitest
 e2e/          prueba de humo con Playwright
 releases/     HTML listo para usar
@@ -81,6 +83,7 @@ Los CSV con datos de paquetes **no se suben a este repositorio** (están en `.gi
 ## Roadmap
 
 - **Iteración 4 (MVP):** layout sobre el plano real (PDF, imagen o DXF) con escala y distancias.
-- **Iteración 5 (esta versión):** retornos (DV-1, LM-4, RT-1, RT-2) y nombre MAT.
-- **Iteración 6:** rediseño de la interfaz y del reporte con el sistema de diseño de MailAmericas (solo escritorio).
-- **Siguientes:** calibración con históricos (CSV), layout completo con muros, columnas, pasillos y equipos limitados, optimización de dotación.
+- **Iteración 5:** retornos (DV-1, LM-4, RT-1, RT-2) y nombre MAT.
+- **Iteración 6 (esta versión):** rediseño de la interfaz y del reporte con el sistema de diseño de MailAmericas (solo escritorio): menú lateral, configuración en 9 secciones, panel por zona en el plano, indicadores desplegables, deshacer y reporte A4.
+- **Iteración 7:** calibración con históricos (CSV).
+- **Siguientes:** layout completo con muros, columnas, pasillos y equipos limitados, optimización de dotación.

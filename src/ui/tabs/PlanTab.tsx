@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import type { SimResult, Sample } from '../../engine/simulate';
 import { PROCESSES, type PlanBackground, type Project, type Warehouse } from '../../model/types';
 import { LayoutEditor } from './LayoutEditor';
+import { ZonePanel } from './ZonePanel';
+import type { Kpis } from '../../engine/kpis';
+import type { KpiSummaries } from './ScenariosTab';
+import type { Section } from './ConfigTab';
 import { DAY, fmtHM, hm } from '../../model/time';
 import { buildPlan, FxLayer, Player, renderPlan, type Geo, type PlayState } from '../../plan/plan';
 import { nf, t } from '../../i18n';
@@ -28,14 +32,51 @@ function activeShifts(w: Warehouse, tt: number): string[] {
   return out;
 }
 
-interface Props { w: Warehouse; r: SimResult; plan: PlanBackground | null; onProject: (fn: (p: Project) => void) => void; say: (m: string) => void }
-
-export function PlanTab(props: Props) {
-  const [edit, setEdit] = useState(false);
-  return edit ? <LayoutEditor plan={props.plan} onProject={props.onProject} say={props.say} onClose={() => setEdit(false)} /> : <PlanView {...props} onEdit={() => setEdit(true)} />;
+interface Props {
+  w: Warehouse; r: SimResult; k: Kpis; prevK: Kpis | null; rep: KpiSummaries | null; plan: PlanBackground | null;
+  onProject: (fn: (p: Project) => void) => void; say: (m: string) => void; edit: boolean; setEdit: (v: boolean) => void; onGoConfig: (s: Section) => void;
 }
 
-function PlanView({ w, r, plan, onEdit }: Props & { onEdit: () => void }) {
+export function PlanTab(props: Props) {
+  return props.edit ? <LayoutEditor plan={props.plan} onProject={props.onProject} say={props.say} onClose={() => props.setEdit(false)} /> : <PlanView {...props} />;
+}
+
+/** Indicadores de la semana en un desplegable: cerrado ocupa una línea; abierto muestra el cambio frente a la corrida anterior (el impacto del último ajuste). */
+function KpiBar({ k, prevK, rep }: { k: Kpis; prevK: Kpis | null; rep: KpiSummaries | null }) {
+  const [open, setOpen] = useState(() => { try { return localStorage.getItem('dtw-kpis') === '1'; } catch { return false; } });
+  const items: { key: keyof Kpis; label: string; val: string; sub: string; scale: number; unit: string; dec: number; better: -1 | 0 | 1 }[] = [
+    { key: 'costPerPkg', label: t('k.costPerPkg'), val: nf(k.costPerPkg, 3) + ' USD', sub: rep ? t('kpi.ci', { ci: nf(rep.costPerPkg.ci, 3) }) : t('kpi.oneRun'), scale: 1, unit: ' USD', dec: 3, better: -1 },
+    { key: 'cptPct', label: t('k.cptPct'), val: nf(k.cptPct * 100, 1) + ' %', sub: t('kpi.cptSub'), scale: 100, unit: ' pp', dec: 1, better: 1 },
+    { key: 'timeMean', label: t('kpi.time'), val: nf(k.timeMean / 60, 1) + ' h', sub: 'P90 ' + nf(k.timeP90 / 60, 1) + ' h', scale: 1 / 60, unit: ' h', dec: 1, better: -1 },
+    { key: 'util', label: t('k.util'), val: nf(k.util * 100, 1) + ' %', sub: t('kpi.utilSub'), scale: 100, unit: ' pp', dec: 1, better: 0 },
+    { key: 'otH', label: t('k.otH'), val: nf(k.otH, 1) + ' h', sub: t('kpi.otSub'), scale: 1, unit: ' h', dec: 1, better: -1 },
+  ];
+  const delta = (it: typeof items[number]) => {
+    if (!prevK || !Number.isFinite(prevK[it.key]) || !Number.isFinite(k[it.key])) return null;
+    const d = (k[it.key] - prevK[it.key]) * it.scale;
+    if (Math.abs(d) < 0.5 * Math.pow(10, -it.dec)) return { txt: t('kpi.same'), cls: '' };
+    const cls = it.better === 0 ? '' : Math.sign(d) === it.better ? 'up' : 'down';
+    return { txt: (d > 0 ? '▲ +' : '▼ −') + nf(Math.abs(d), it.dec) + it.unit, cls };
+  };
+  return (
+    <details class="kpibar" open={open} onToggle={e => { const o = (e.currentTarget as HTMLDetailsElement).open; setOpen(o); try { localStorage.setItem('dtw-kpis', o ? '1' : '0'); } catch { /* ignorar */ } }}>
+      <summary>
+        <b>{t('kpi.title')}</b>
+        {items.map(it => <span>{it.label} <b>{it.val}</b></span>)}
+        <span class="chev" aria-hidden="true">▾</span>
+      </summary>
+      <div class="kpigrid">
+        {items.map(it => { const d = delta(it); return (
+          <div class="stat"><div class="l">{it.label}</div><div class="v">{it.val}</div><div class="d">{it.sub}</div>
+            {d && <div class={'delta ' + d.cls}>{d.txt} <span class="hint">{t('kpi.vsPrev')}</span></div>}</div>); })}
+      </div>
+    </details>
+  );
+}
+
+function PlanView({ w, r, k, prevK, rep, plan, setEdit, onGoConfig }: Props) {
+  const onEdit = () => setEdit(true);
+  const [zone, setZone] = useState<string | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const ref = useRef<{ G: Geo; P: Player; fx: FxLayer; raf: number; last: number } | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -67,6 +108,11 @@ function PlanView({ w, r, plan, onEdit }: Props & { onEdit: () => void }) {
     publish();
     return () => { if (ref.current) cancelAnimationFrame(ref.current.raf); };
   }, [r, plan]);
+  /* zona elegida: se resalta en el plano y se abre su panel */
+  useEffect(() => {
+    svgRef.current?.querySelectorAll('.zhit.sel').forEach(e => e.classList.remove('sel'));
+    if (zone) svgRef.current?.querySelector(`.zhit[data-zone="${CSS.escape(zone)}"]`)?.classList.add('sel');
+  }, [zone, r, plan]);
 
   const pause = () => { const c = ref.current; if (c) cancelAnimationFrame(c.raf); setPlaying(false); publish(); };
   const play = () => {
@@ -114,6 +160,8 @@ function PlanView({ w, r, plan, onEdit }: Props & { onEdit: () => void }) {
   const dayLabel = (x: number) => `${t('d' + (Math.floor(x / DAY) % 7))}${x >= 7 * DAY ? ' (' + t('nextWeek') + ')' : ''} ${fmtHM(x)}`;
 
   return (
+    <>
+    <KpiBar k={k} prevK={prevK} rep={rep} />
     <div class="simgrid">
       <div class="card">
         <div class="ctl">
@@ -127,14 +175,17 @@ function PlanView({ w, r, plan, onEdit }: Props & { onEdit: () => void }) {
           <button class="btn" onClick={() => { pause(); onEdit(); }}>{t('ed.open')}</button>
         </div>
         <div class="daybar">{[0, 1, 2, 3, 4, 5, 6].map(d => <button class={Math.floor(tt / DAY) === d ? 'on' : ''} onClick={() => seek(d * DAY + start % DAY)}>{t('d' + d)}</button>)}</div>
-        <div class="planwrap"><svg ref={svgRef} id="plan" xmlns="http://www.w3.org/2000/svg" /></div>
+        <div class="planwrap"><svg ref={svgRef} id="plan" xmlns="http://www.w3.org/2000/svg" onClick={e => { const z = (e.target as Element).closest('[data-zone]'); setZone(z ? z.getAttribute('data-zone') : null); }} /></div>
         <div class="legend">
           <span><i style={{ background: 'var(--orange)' }} />{t('plan.legendRv')}</span>
           <span><i style={{ background: 'var(--green)' }} />{t('plan.legendDir')}</span>
           <span><i style={{ border: '1.5px dashed var(--muted)' }} />{t('plan.legendClosed')}</span>
+          <span class="hint">{t('plan.clickZone')}</span>
         </div>
       </div>
       <div class="side">
+        {zone && <ZonePanel zone={zone} w={w} r={r} onClose={() => setZone(null)} onGoConfig={onGoConfig} />}
+        {!zone && <>
         <div class="card">
           <h2>{t('live.title')}</h2>
           {S && <>
@@ -156,7 +207,9 @@ function PlanView({ w, r, plan, onEdit }: Props & { onEdit: () => void }) {
               <div class="pbar"><i style={{ width: `${smp?.duty[p] ? (smp.busy[p] / smp.duty[p]) * 100 : 0}%` }} /></div></div>
           ))}
         </div>
+        </>}
       </div>
     </div>
+    </>
   );
 }
