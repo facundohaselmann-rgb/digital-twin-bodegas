@@ -67,6 +67,9 @@ export async function readProjectFile(f: File): Promise<Project> { return parseP
 export function autosave(p: Project): void {
   try { localStorage.setItem(AUTOSAVE_KEY, serialize(p)); } catch { /* sin espacio o bloqueado */ }
 }
+/* Marca de "guardado en archivo": si el autoguardado es más nuevo, hay cambios que no están en el .dtwin. */
+export function markSaved(p: Project): void { try { localStorage.setItem('dtw-saved-at', p.updatedAt); } catch { /* ignorar */ } }
+export function isSaved(p: Project): boolean { try { return localStorage.getItem('dtw-saved-at') === p.updatedAt; } catch { return false; } }
 export function loadAutosave(): Project | null {
   try { const s = localStorage.getItem(AUTOSAVE_KEY); return s ? parseProject(s) : null; } catch { return null; }
 }

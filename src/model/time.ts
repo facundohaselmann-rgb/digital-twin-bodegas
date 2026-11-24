@@ -21,8 +21,6 @@ export function fmtHM(t: number | null | undefined): string {
   return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`;
 }
 
-/** Índice de día (0 = lunes) para un instante de la simulación. Puede ser ≥ 7 (semana siguiente). */
-export function dayOf(t: number): number { return Math.floor(t / DAY); }
 
 /** Duración en minutos → "1 h 05 min" / "45 min". */
 export function fmtDur(m: number | null | undefined): string {

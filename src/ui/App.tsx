@@ -9,7 +9,7 @@ import { blankWarehouse, jamaicaWarehouse, newProject } from '../model/defaults'
 import { normalize } from '../model/normalize';
 import { runSimulation } from '../engine/runner';
 import type { SimResult } from '../engine/simulate';
-import { autosave, fsSupported, loadAutosave, openProjectFs, readProjectFile, saveProject, type FsHandle } from '../storage/project';
+import { autosave, fsSupported, isSaved, loadAutosave, markSaved, openProjectFs, readProjectFile, saveProject, type FsHandle } from '../storage/project';
 
 type Tab = 'plan' | 'results' | 'config';
 interface Run { w: Warehouse; r: SimResult; warnings: Warning[]; ms: number }
@@ -22,9 +22,10 @@ function warnText(x: Warning): string {
 
 export function App() {
   const [lang, setLangState] = useState<Lang>(getLang());
-  const [project, setProject] = useState<Project>(() => loadAutosave() ?? newProject());
+  const [init] = useState(() => { const a = loadAutosave(); return { p: a ?? newProject(), dirty: !!a && !isSaved(a) }; });
+  const [project, setProject] = useState<Project>(init.p);
   const [handle, setHandle] = useState<FsHandle | null>(null);
-  const [dirty, setDirty] = useState(false);
+  const [dirty, setDirty] = useState(init.dirty);
   const [run, setRun] = useState<Run | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
@@ -73,10 +74,11 @@ export function App() {
       const res = await saveProject(project, handle, ask);
       setHandle(res.handle);
       setDirty(false);
+      markSaved(project);
       say(res.mode === 'fs' ? t('file.savedTo', { name: res.name }) : t('file.downloaded', { name: res.name }));
     } catch (e) { if ((e as Error).name !== 'AbortError') say(String(e)); }
   };
-  const loadProject = (p: Project, h: FsHandle | null) => { setProject(p); setHandle(h); setDirty(false); say(t('file.opened', { name: p.name })); };
+  const loadProject = (p: Project, h: FsHandle | null) => { setProject(p); setHandle(h); setDirty(false); markSaved(p); say(t('file.opened', { name: p.name })); };
   const doOpen = async () => {
     if (dirty && !confirm(t('file.confirmNew'))) return;
     if (fsSupported()) {

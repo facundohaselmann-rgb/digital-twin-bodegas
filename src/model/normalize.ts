@@ -1,5 +1,5 @@
-import { PROCESSES, TIME_KEYS, type Days, type ProcessKey, type Warehouse, type Warning, type PackageProfile } from './types';
-import { DEFAULT_TIMES, MON_SAT, uid } from './defaults';
+import { PROCESSES, TIME_KEYS, type Days, type ProcessKey, type Routes, type Warehouse, type Warning, type PackageProfile } from './types';
+import { DEFAULT_SORTER, DEFAULT_TIMES, MON_SAT, uid } from './defaults';
 import { hm } from './time';
 
 const num = (v: unknown, d: number, lo?: number, hi?: number): number => {
@@ -72,12 +72,12 @@ export function normalize(w: Warehouse): Warning[] {
   else if (Math.abs(shareSum - 100) > 0.5) W.push({ key: 'w.shareSum', params: { sum: Math.round(shareSum * 10) / 10 } });
 
   /* rutas */
-  w.routes = w.routes ?? { count: 10, first: '14:00', everyMin: 10, days: [...MON_SAT] as Days };
-  w.routes.count = int(w.routes.count, 10, 1, 60);
-  w.routes.first = time(w.routes.first, '14:00');
-  w.routes.everyMin = num(w.routes.everyMin, 10, 0, 600);
-  w.routes.days = days(w.routes.days);
-  if (w.groups.some(g => g.dest === 'branch') && !w.routes.days.some(Boolean)) W.push({ key: 'w.noRouteDays' });
+  const rt = (w.routes ?? {}) as Routes & { first?: string; everyMin?: number; days?: Days };
+  // archivos de la iteración 1: una sola franja (first/everyMin/days) pasa a ser la primera ventana
+  if (!Array.isArray(rt.windows)) rt.windows = [{ id: uid('v'), name: 'Ventana 1', days: rt.days ?? [...MON_SAT] as Days, first: rt.first ?? '14:00', everyMin: rt.everyMin ?? 10 }];
+  w.routes = { count: int(rt.count, 10, 1, 60), windows: rt.windows };
+  w.routes.windows.forEach(v => { v.id ||= uid('v'); v.days = days(v.days); v.first = time(v.first, '14:00'); v.everyMin = num(v.everyMin, 10, 0, 600); });
+  if (w.groups.some(g => g.dest === 'branch') && !w.routes.windows.some(v => v.days.some(Boolean))) W.push({ key: 'w.noRouteDays' });
 
   /* tiempos */
   w.times = w.times ?? structuredClone(DEFAULT_TIMES);
@@ -105,6 +105,16 @@ export function normalize(w: Warehouse): Warning[] {
   w.outboundLoadWindowMin = num(w.outboundLoadWindowMin, 30, 0, 1440);
   w.volumePct = num(w.volumePct, 100, 1, 1000);
   w.costs = { overtimeMultiplier: num(w.costs?.overtimeMultiplier, 1.5, 1, 5) };
+  const so = w.sorting ?? { type: 'manual', sorter: { ...DEFAULT_SORTER } };
+  const sr = { ...DEFAULT_SORTER, ...so.sorter };
+  w.sorting = { type: so.type === 'ptl' || so.type === 'sorter' ? so.type : 'manual', sorter: {
+    inductionPoints: int(sr.inductionPoints, 2, 1, 100), machinePerHour: num(sr.machinePerHour, 3000, 1, 1e6), chutes: int(sr.chutes, 24, 1, 2000),
+    maxKg: num(sr.maxKg, 30, 0.1, 1e4), maxLengthCm: num(sr.maxLengthCm, 80, 1, 1e4), maxWidthCm: num(sr.maxWidthCm, 60, 1, 1e4), maxHeightCm: num(sr.maxHeightCm, 60, 1, 1e4),
+    noReadPct: num(sr.noReadPct, 0, 0, 100) } };
+  w.hospital = { exceptionPct: num(w.hospital?.exceptionPct, 0, 0, 100), relabelPct: num(w.hospital?.relabelPct, 75, 0, 100) };
+  const pr = (w.multiskill?.priority ?? []).filter(p => (PROCESSES as readonly string[]).includes(p));
+  w.multiskill = { changeMin: num(w.multiskill?.changeMin, 5, 0, 240), priority: [...new Set([...pr, ...PROCESSES])] };
+  w.cptLeadMin = num(w.cptLeadMin, 240, 0, 7 * 1440);
 
   /* turnos */
   w.shifts = Array.isArray(w.shifts) ? w.shifts : [];
@@ -127,19 +137,8 @@ export function normalize(w: Warehouse): Warning[] {
     });
   });
 
-  /* procesos necesarios sin personal en ningún turno */
-  const need = new Set<ProcessKey>(['unload', 'sort']);
-  if (w.inbound.some(t => t.mix.boxes > 0 || t.mix.uld > 0)) need.add('decon');
-  if (w.groups.some(g => g.reverify)) need.add('reverify');
-  if (w.groups.some(g => g.dest === 'branch')) need.add('branch');
-  if (w.groups.some(g => g.dest === 'stageout')) need.add('load');
-  need.forEach(p => {
-    if (!w.shifts.some(s => s.staff[p] > 0 && s.days.some(Boolean))) W.push({ key: 'w.noStaff', params: { process: p } });
-  });
+  /* con personal multiskill alcanza con que haya alguien en algún turno */
+  if (!w.shifts.some(s => s.days.some(Boolean) && PROCESSES.some(p => s.staff[p] > 0))) W.push({ key: 'w.noStaff' });
   return W;
 }
 
-/** Perfil efectivo de un grupo. */
-export function groupProfile(w: Warehouse, gi: number): PackageProfile {
-  return w.groups[gi]?.profile ?? w.packageProfile;
-}
