@@ -336,6 +336,7 @@ function ProcessesCard() {
       <div class="frow">
         <Field label={t('cfg.exceptionPct')} hint={t('cfg.hospitalHint')}><Num path="hospital.exceptionPct" min={0} max={100} /></Field>
         <Field label={t('cfg.relabelPct')}><Num path="hospital.relabelPct" min={0} max={100} /></Field>
+        <Field label={t('cfg.bufferMin')} hint={t('cfg.bufferHint')}><Num path="multiskill.bufferMin" min={0} /></Field>
         <Field label={t('cfg.changeMin')}><Num path="multiskill.changeMin" min={0} /></Field>
       </div>
       <div class="sub" style={{ margin: '6px 0 4px' }}>{t('cfg.priority')}</div>
