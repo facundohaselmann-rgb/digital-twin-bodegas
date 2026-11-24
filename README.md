@@ -1,4 +1,6 @@
-# Digital Twin · Bodegas cross-dock
+# MAT · Digital Twin de bodegas cross-dock
+
+**MAT** (MailAmericas Twin) es el gemelo digital de las bodegas de MailAmericas.
 
 Herramienta para **dimensionar y simular bodegas cross-dock** por proyecto: diseño de bodegas nuevas, cambios de proceso, aumentos de volumen y cambios de layout. Simula una **semana completa** con eventos discretos y muestra el plano animado, la utilización del personal por turno y los tiempos WI-2 → RC-0.
 
@@ -37,6 +39,7 @@ Cada cambio se vuelve a simular al instante. El idioma (ES/EN) se cambia arriba 
 | Reporte | Exportar PDF con la impresión de Chrome ("Guardar como PDF") y CSV |
 | Layout y plano | **✎ Editar plano** en la pestaña del plano: cada proceso, cada grupo de canastos, cada carril de Stage out, cada puerta de carga, Branch y la salida de carteros es una zona en metros que se arrastra y se redimensiona. El plano real se carga de fondo como **PDF** (se elige la página), **imagen** (PNG/JPG) o **CAD en DXF** (con sus medidas); la escala se fija marcando dos puntos de una medida conocida. El DWG se exporta antes como DXF o PDF. Cada escenario tiene su propia disposición; el plano de fondo es del proyecto |
 | Traslados | Distancia en ángulo recto entre los bordes más cercanos de cada zona (las zonas que se tocan se pasan la carga sin viaje; el recorrido dentro de una zona ya está en los tiempos estándar). Cada viaje suma ida y vuelta a la velocidad del medio (a pie 1,2 m/s, carro 1,0 m/s, transpaleta 0,8 m/s) más 30 s para tomar y dejar la carga. Sorting manual y Pick to Light: a pie hasta los canastos; sorter: la cinta lleva los paquetes. ULD: siempre en transpaleta. Cambio de puesto: 2 min más la caminata entre zonas. Resultado: km recorridos, horas de traslado y su parte del costo |
+| Retornos | El cartero devuelve un % de lo que se llevó (2 % por defecto) en su próximo retiro: el DV-1 se hace antes del control de ruta y los paquetes quedan en la estantería de retiro (LM-4). Los clientes retiran un % (25 %) dentro de los días máximos (14 corridos desde DV-1); llegan durante el turno mañana y los atiende quien está en despacho de carteros o alguien ocioso. Lo que vence pasa a RT-1. Las sucursales devuelven un % (2 %) en uno de cada dos camiones, directo a RT-1. Lo destruido en el hospital va a la caja de destrucción. RT-1 clasifica en cajas de destrucción o retorno (50/50) y el camión RT-2 pasa una vez por semana o al juntar N cajas. RT-1 y RT-2 son de baja prioridad: los hace quien está ocioso y no generan horas extra. La estantería se calcula en régimen estable (las semanas anteriores iguales a la simulada). Resultado: estantería promedio y máxima, días en estantería, retirados, vencidos, cajas, viajes RT-2 y costo por paquete retornado |
 | Plantillas | Jamaica (sorting manual con PDA, disposición del plano de la presentación original a 50 × 25 m), **Modelo** (genérica, Pick to Light y todas las funciones) y bodega en blanco |
 | Resultados | CPT a tiempo por grupo, tiempo WI-2 → RC-0 (media, P90, P95, P98), utilización y cambios de puesto por turno, hospital, sorter, pendiente al cierre de cada turno, camiones de entrada y salida, eventos de Tracking, gráficos semanales, exportación a CSV |
 
@@ -77,5 +80,7 @@ Los CSV con datos de paquetes **no se suben a este repositorio** (están en `.gi
 
 ## Roadmap
 
-- **Iteración 4 (MVP, esta versión):** layout sobre el plano real (PDF, imagen o DXF) con escala y distancias.
-- **Siguientes:** retornos (DV-1, LM-4, RT-1, RT-2), layout completo con muros, columnas, pasillos y equipos limitados, calibración con históricos (CSV), optimización de dotación.
+- **Iteración 4 (MVP):** layout sobre el plano real (PDF, imagen o DXF) con escala y distancias.
+- **Iteración 5 (esta versión):** retornos (DV-1, LM-4, RT-1, RT-2) y nombre MAT.
+- **Iteración 6:** rediseño de la interfaz y del reporte con el sistema de diseño de MailAmericas (solo escritorio).
+- **Siguientes:** calibración con históricos (CSV), layout completo con muros, columnas, pasillos y equipos limitados, optimización de dotación.

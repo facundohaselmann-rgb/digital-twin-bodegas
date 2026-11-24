@@ -5,7 +5,7 @@
   --text:#272726;--text-2:#5b5f64;--muted:#8a8e93;
   --floor:#fbfbfb;--wall:#272726;--grid:#eeeef0;--zone:#f4f9ec;--zone-b:#cfe6b0;--zone-o:#fff6f2;--zone-ob:#ffc9b5;
   --belt:#c9cbcf;--slot:#ffffff;--slot-b:#c9cbcf;
-  --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--s5:#e87ba4;--s6:#008300;--s7:#6250d6;
+  --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--s5:#e87ba4;--s6:#008300;--s7:#6250d6;--s8:#7b8086;
   --good:#3a8a0c;--bad:#d4331f;--bad-l:#fde4e0;
 }
 @media (prefers-color-scheme: dark){
@@ -15,7 +15,7 @@
     --text:#f0efec;--text-2:#c3c2b7;--muted:#9a998f;
     --floor:#1a1a19;--wall:#d8d7d2;--grid:#242423;--zone:#1f2a14;--zone-b:#3f5a22;--zone-o:#2e1d16;--zone-ob:#6b3420;
     --belt:#4a4a48;--slot:#262625;--slot-b:#4a4a48;
-    --s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--s5:#d55181;--s6:#0ca30c;--s7:#9085e9;
+    --s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--s5:#d55181;--s6:#0ca30c;--s7:#9085e9;--s8:#a6abb0;
     --good:#7fcf3a;--bad:#ff6b57;--bad-l:#3a1712;--green-l:#263a14;--green-d:#9bd95a;--orange-l:#3a1d12;
   }
 }
@@ -25,7 +25,7 @@
   --text:#f0efec;--text-2:#c3c2b7;--muted:#9a998f;
   --floor:#1a1a19;--wall:#d8d7d2;--grid:#242423;--zone:#1f2a14;--zone-b:#3f5a22;--zone-o:#2e1d16;--zone-ob:#6b3420;
   --belt:#4a4a48;--slot:#262625;--slot-b:#4a4a48;
-  --s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--s5:#d55181;--s6:#0ca30c;--s7:#9085e9;
+  --s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--s5:#d55181;--s6:#0ca30c;--s7:#9085e9;--s8:#a6abb0;
   --good:#7fcf3a;--bad:#ff6b57;--bad-l:#3a1712;--green-l:#263a14;--green-d:#9bd95a;--orange-l:#3a1d12;
 }
 *{box-sizing:border-box;margin:0;padding:0}
@@ -99,6 +99,8 @@ select{border:1px solid var(--line);background:var(--surface);border-radius:8px;
 .role .top span{color:var(--text-2)}
 .role .top b{font-variant-numeric:tabular-nums;font-weight:600}
 .role .pbar>i{background:var(--orange)}
+
+.brand h1 .mark{width:22px;height:22px;vertical-align:-4px;margin-right:8px}
 
 /* plano svg */
 #plan text{font-family:'Poppins',system-ui,sans-serif}

@@ -58,8 +58,10 @@ export interface SortingGroup {
   profile: PackageProfile | null;
 }
 
-export const PROCESSES = ['unload', 'decon', 'sort', 'hospital', 'reverify', 'branch', 'load'] as const;
+export const PROCESSES = ['unload', 'decon', 'sort', 'hospital', 'reverify', 'branch', 'load', 'returns'] as const;
 export type ProcessKey = typeof PROCESSES[number];
+/** Procesos con dotación propia. Retornos (RT-1/RT-2) no tiene personal fijo: lo hace quien está ocioso. */
+export const STAFFED = PROCESSES.filter(p => p !== 'returns');
 
 export interface ShiftBreak { start: string; minutes: number }
 
@@ -82,6 +84,7 @@ export interface Shift {
 export const TIME_KEYS = [
   'unloadBox', 'unloadUld', 'unloadLoose', 'openBox', 'emptyUld',
   'sort', 'sortPtl', 'induct', 'swap', 'relabel', 'reverify', 'missortFix', 'container', 'branchSort', 'search', 'load', 'handover',
+  'dv1', 'custAttend', 'rt1', 'rt2Load',
 ] as const;
 export type TimeKey = typeof TIME_KEYS[number];
 
@@ -143,7 +146,7 @@ export interface Discrepancies {
 
 /* ---------------------------- layout ---------------------------- */
 /** Zonas que se dibujan sobre el plano. `group`, `stage` y `outDoor` existen una por grupo (ref = id del grupo). */
-export const ZONE_KINDS = ['inbound', 'decon', 'sort', 'hospital', 'reverify', 'group', 'stage', 'outDoor', 'branch', 'exit'] as const;
+export const ZONE_KINDS = ['inbound', 'decon', 'sort', 'hospital', 'reverify', 'group', 'stage', 'outDoor', 'branch', 'exit', 'shelf', 'returns', 'rt2Door'] as const;
 export type ZoneKind = typeof ZONE_KINDS[number];
 /** Rectángulo en metros; (0,0) es la esquina superior izquierda de la bodega. */
 export interface Zone { kind: ZoneKind; ref: string; x: number; y: number; w: number; h: number }
@@ -171,6 +174,24 @@ export interface PlanBackground {
   w: number; h: number;
   /** Metros por unidad propia. */
   scale: number;
+}
+
+/** Retornos: devoluciones de carteros (DV-1 → estantería LM-4), de sucursales y del hospital, clasificados en RT-1 y retirados en RT-2. */
+export interface Returns {
+  /** % de lo que se lleva cada cartero que vuelve en su próximo retiro. */
+  postmanPct: number;
+  /** % de lo despachado a cada sucursal que vuelve (en uno de cada dos camiones). */
+  branchPct: number;
+  /** % de la estantería que retiran los clientes antes de `holdDays` días corridos desde DV-1. */
+  pickupPct: number;
+  holdDays: number;
+  /** % de RT-1 que va a destrucción (el resto, a retorno). Lo destruido en el hospital va siempre a destrucción. */
+  destroyPct: number;
+  pkgsPerBox: number;
+  /** Posiciones de la estantería; 0 = sin límite. Si se supera, se avisa. */
+  shelfCapacity: number;
+  /** El camión RT-2 pasa una vez por semana (día 0 = lunes) o antes, cuando se juntan `maxBoxes` cajas llenas. */
+  rt2: { day: number; time: string; maxBoxes: number };
 }
 
 export interface Warehouse {
@@ -204,6 +225,7 @@ export interface Warehouse {
   /** Disposición dibujada; null = sin distancias (proyectos anteriores a la iteración 4). */
   layout: Layout | null;
   travel: Travel;
+  returns: Returns;
 }
 
 export interface Scenario { id: string; name: string; warehouse: Warehouse }

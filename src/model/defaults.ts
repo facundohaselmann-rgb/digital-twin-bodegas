@@ -1,5 +1,5 @@
 import { autoLayout, DEFAULT_TRAVEL } from './layout';
-import { PROCESSES, type Days, type ProcessKey, type Project, type SortingGroup, type Warehouse, type Shift, type InboundTruck, type Tri, type TimeKey, type Sorter, type FixedCost, type Discrepancies, type Scenario, type SortingType } from './types';
+import { STAFFED, type Days, type Returns, type ProcessKey, type Project, type SortingGroup, type Warehouse, type Shift, type InboundTruck, type Tri, type TimeKey, type Sorter, type FixedCost, type Discrepancies, type Scenario, type SortingType } from './types';
 
 let counter = 0;
 export function uid(prefix = 'id'): string {
@@ -27,6 +27,10 @@ export const DEFAULT_TIMES: Record<TimeKey, Tri> = {
   search: { min: 5, mode: 10, max: 20 },            // min por paquete faltante de cartero
   load: { min: 1, mode: 1.5, max: 2.5 },            // min por unidad
   handover: { min: 2, mode: 3, max: 5 },            // min por ruta
+  dv1: { min: 5, mode: 8, max: 12 },                // s por paquete devuelto por el cartero (escaneo y estantería)
+  custAttend: { min: 2, mode: 3, max: 4 },          // min por cliente que retira
+  rt1: { min: 6, mode: 8, max: 12 },                // s por paquete en retornos (escaneo y caja)
+  rt2Load: { min: 0.5, mode: 1, max: 1.5 },         // min por caja cargada al camión RT-2
 };
 
 /** Costos fijos de catálogo (USD por mes, supuestos editables). Los de sorter y PTL cuentan solo si la bodega los usa. */
@@ -48,11 +52,16 @@ export function defaultFixedCosts(): FixedCost[] {
 }
 export const DEFAULT_DISCREPANCIES: Discrepancies = { customsPct: 0.3, missortPct: { manual: 1, ptl: 0.3, sorter: 0.1 }, postmanPct: 0.5, postmanFoundPct: 50 };
 
+/** Retornos por defecto; las cajas son del mismo tamaño que las de aduana. */
+export function defaultReturns(pkgsPerBox: number): Returns {
+  return { postmanPct: 2, branchPct: 2, pickupPct: 25, holdDays: 14, destroyPct: 50, pkgsPerBox, shelfCapacity: 0, rt2: { day: 4, time: '15:00', maxBoxes: 10 } };
+}
+
 /** Valores de catálogo (supuestos editables). */
 export const DEFAULT_SORTER: Sorter = { inductionPoints: 2, machinePerHour: 3000, chutes: 24, maxKg: 30, maxLengthCm: 80, maxWidthCm: 60, maxHeightCm: 60, noReadPct: 2 };
 
 function staff(o: Partial<Record<ProcessKey, number>>): Record<ProcessKey, number> {
-  return { unload: 0, decon: 0, sort: 0, hospital: 0, reverify: 0, branch: 0, load: 0, ...o };
+  return { unload: 0, decon: 0, sort: 0, hospital: 0, reverify: 0, branch: 0, load: 0, returns: 0, ...o };
 }
 
 function group(name: string, share: number, reverify: boolean, dest: 'stageout' | 'branch', truck: string | null,
@@ -119,12 +128,13 @@ function jamaicaBase(): Warehouse {
     costs: { overtimeMultiplier: 1.5, relabelUsd: 0.05, fixed: defaultFixedCosts() },
     sorting: { type: 'manual', sorter: structuredClone(DEFAULT_SORTER) },
     hospital: { exceptionPct: 1.5, relabelPct: 75 },
-    multiskill: { bufferMin: 10, changeMin: 2, priority: [...PROCESSES] },
+    multiskill: { bufferMin: 10, changeMin: 2, priority: [...STAFFED] },
     cptLeadMin: 240,
     discrepancies: structuredClone(DEFAULT_DISCREPANCIES),
     replicas: 20,
     layout: null,
     travel: structuredClone(DEFAULT_TRAVEL),
+    returns: defaultReturns(60),
   };
 }
 
@@ -171,6 +181,7 @@ export function modelWarehouse(): Warehouse {
       { ...w.shifts[1], id: uid('t'), staff: staff({ unload: 2, decon: 1, sort: 3, reverify: 2, branch: 2, load: 2 }) },
     ],
     sorting: { type: 'ptl', sorter: structuredClone(DEFAULT_SORTER) },
+    returns: defaultReturns(50),
   });
 }
 

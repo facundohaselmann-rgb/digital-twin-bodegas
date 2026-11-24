@@ -9,13 +9,13 @@ import { distances } from '../model/layout';
 import { DAY, WEEK, hm } from '../model/time';
 import { Deque, EventHeap, mulberry32, percentile, triangular } from './core';
 
-export const SECOND_KEYS: ReadonlySet<TimeKey> = new Set<TimeKey>(['unloadLoose', 'sort', 'sortPtl', 'induct', 'reverify', 'branchSort']);
+export const SECOND_KEYS: ReadonlySet<TimeKey> = new Set<TimeKey>(['unloadLoose', 'sort', 'sortPtl', 'induct', 'reverify', 'branchSort', 'dv1', 'rt1']);
 const HORIZON = 2 * WEEK;
 
 export interface SimOptions { seed?: number; log?: boolean; volume?: number }
 export type LogEv = { t: number; e: string; [k: string]: number | string | Record<string, number> | null };
 
-export interface Wip { unload: number; decon: number; sort: number; hospital: number; baskets: number; reverify: number; branch: number; stage: number; routes: number }
+export interface Wip { unload: number; decon: number; sort: number; hospital: number; baskets: number; reverify: number; branch: number; stage: number; routes: number; shelf: number }
 export interface Sample { t: number; busy: Record<ProcessKey, number>; duty: Record<ProcessKey, number>; wip: Wip }
 export interface ProcessStat { key: ProcessKey; jobs: number; busyMin: number; waitAvg: number; maxQueuePkgs: number }
 export interface ShiftStat { shiftId: string; name: string; night: boolean; workers: number; paidMin: number; busyMin: number; otMin: number; util: number; changes: number; changeMin: number }
@@ -55,13 +55,17 @@ export interface SimResult {
   routeTotals: number[];
   /** Traslados de la semana (incluye caminar al cambiar de puesto). */
   travel: { km: number; hours: number };
+  /** Retornos de la semana. dv1: devueltos por carteros; branch: de sucursales; hospital: destruidos en el hospital; picked: retirados por clientes;
+      expired: vencidos en estantería; rt1 = destroy + back; custMin: minutos atendiendo clientes; shelf*: paquetes en estantería (stayDays: días promedio). */
+  returns: { dv1: number; branch: number; hospital: number; picked: number; expired: number; rt1: number; destroy: number; back: number; boxes: number; trips: number;
+    custMin: number; shelfStart: number; shelfAvg: number; shelfMax: number; stayDays: number };
 }
 
 /* ------------------------------------------------------------------ */
 interface Pkg { ti: number; g: number; s: number; r: number; vol: number; kg: number; wi2: number; bi: number; nc: boolean; relabeled: boolean; bad: boolean }
 interface Unit { pk: Pkg[]; sk: string | null; m3: number; kg: number }
 /** tr: minutos de traslado de la tarea (a productividad 100 %); m: metros recorridos. */
-interface Job { pk: number; base: () => number; tr?: number; m?: number; machine?: () => number; start?: () => void; done: () => void; cancelled?: boolean; started?: boolean; eq?: number; free?: boolean }
+interface Job { pk: number; base: () => number; tr?: number; m?: number; cust?: boolean; machine?: () => number; start?: () => void; done: () => void; cancelled?: boolean; started?: boolean; eq?: number; free?: boolean }
 /** state: 0 fuera de turno, 1 libre, 2 trabajando, 3 en pausa, 4 cambiando de puesto */
 interface Worker { shift: number; home: ProcessKey; proc: ProcessKey; state: 0 | 1 | 2 | 3 | 4; inWin: boolean; brk: boolean; ot: boolean; otStart: number; otEnd: number; prod: number; otMin: number; busyW1: number; changes: number; changeMin: number; idleSince: number }
 /** q: tareas que necesitan estación; free: tareas sin estación (p. ej. sorting manual al lado del sorter). */
@@ -69,12 +73,16 @@ interface Pool { key: ProcessKey; q: Deque<Job>; free: Deque<Job>; qPk: number; 
 interface OutTruck { gi: number; day: number; arr: number; sched: number; state: 'here' | 'closing' | 'gone'; m3: number; kg: number; units: number; pkgs: number; inflight: number; jobs: Job[] }
 
 /** Multiskill: a qué proceso va una persona que quedó libre. */
-export function nextProcess(home: ProcessKey, current: ProcessKey, needsHelp: (p: ProcessKey) => boolean, hasWork: (p: ProcessKey) => boolean, priority: readonly ProcessKey[]): ProcessKey {
+/** `low`: procesos de baja prioridad (retornos): se hacen solo si nadie más necesita ayuda. */
+export function nextProcess(home: ProcessKey, current: ProcessKey, needsHelp: (p: ProcessKey) => boolean, hasWork: (p: ProcessKey) => boolean, priority: readonly ProcessKey[], low: readonly ProcessKey[] = []): ProcessKey {
   if (current !== home && needsHelp(home)) return home;   // vuelve a su puesto si tiene trabajo
-  if (hasWork(current)) return current;
+  const isLow = low.includes(current);
+  if (!isLow && hasWork(current)) return current;
   if (needsHelp('load')) return 'load';                    // la carga va primero si hay camión esperando
   for (const p of priority) if (needsHelp(p)) return p;
-  return current;
+  if (hasWork(current)) return current;
+  for (const p of low) if (needsHelp(p)) return p;
+  return isLow ? home : current;                           // sin trabajo de baja prioridad, vuelve a su puesto
 }
 
 export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
@@ -133,7 +141,8 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
   const hasWork = (P: Pool): boolean => P.free.length > 0 || (P.q.length > 0 && P.stBusy < P.stations);
   /** ¿Faltan manos? (tareas que podrían empezar ya, menos quienes están libres o en camino) */
   const needsHelp = (P: Pool): boolean => P.idle.length + P.incoming < Math.min(P.q.length, Math.max(0, P.stations - P.stBusy)) + P.free.length;
-  const anyWork = (): boolean => basketsWaiting > 0 || PROCESSES.some(p => pools[p].q.length || pools[p].free.length || pools[p].busy);
+  // retornos es de baja prioridad: no retiene a nadie en horas extra
+  const anyWork = (): boolean => basketsWaiting > 0 || PROCESSES.some(p => p !== 'returns' && (pools[p].q.length || pools[p].free.length || pools[p].busy));
   const otDay = new Array(14).fill(0);
   const endOT = (w: Worker): void => {
     const m = now - w.otStart;
@@ -147,7 +156,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
   };
 
   /* multiskill: a dónde va una persona que quedó libre */
-  const pickTarget = (w: Worker): ProcessKey => nextProcess(w.home, w.proc, p => needsHelp(pools[p]), p => hasWork(pools[p]), W.multiskill.priority);
+  const pickTarget = (w: Worker): ProcessKey => nextProcess(w.home, w.proc, p => needsHelp(pools[p]), p => hasWork(pools[p]), W.multiskill.priority, ['returns']);
   const move = (w: Worker, target: ProcessKey): void => {
     setState(w, 4);
     pools[target].incoming++;
@@ -221,7 +230,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
       j.start?.();
       at(now + d, () => {
         if (!j.free) P.stBusy--;
-        if (startDay < 7) { P.busyW1 += d; w.busyW1 += d; travel.min += (j.tr ?? 0) / w.prod; travel.m += j.m ?? 0; }
+        if (startDay < 7) { P.busyW1 += d; w.busyW1 += d; travel.min += (j.tr ?? 0) / w.prod; travel.m += j.m ?? 0; if (j.cust) ret.custMin += d; }
         dayBusy[startDay] += d;
         dayLast[startDay] = Math.max(dayLast[startDay] ?? 0, now);
         j.done();
@@ -321,7 +330,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     }
   });
   let unfinished = totPk, inboundLeft = trucks.length, endT = 0;
-  const EV: Record<string, number> = { 'WI-2': 0, 'WI-3 + WI-4': 0, 'AV-1': 0, 'RC-0': 0, 'LM-1': 0, 'LM-12': 0 };
+  const EV: Record<string, number> = { 'WI-2': 0, 'WI-3 + WI-4': 0, 'AV-1': 0, 'RC-0': 0, 'LM-1': 0, 'LM-12': 0, 'DV-1': 0, 'LM-4': 0, 'RT-1': 0, 'RT-2': 0 };
   const scans = G.map(() => 0), basketsUsed = G.map(() => 0), containers = G.map(() => 0);
   const hourly = { sorted: [] as number[], rc0: [] as number[], inducted: [] as number[] };
   const hadd = (k: 'sorted' | 'rc0' | 'inducted', n: number): void => { const h = Math.floor(now / 60); const a = hourly[k]; while (a.length <= h) a.push(0); a[h] += n; };
@@ -424,7 +433,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     L('hosIn');
     submit('hospital', { pk: 1, base: () => T('relabel'), ...mv(D.hospital, TV.modes.hospital, 1 / cap.basketPkgs), done: () => {
       if (rnd() < HOS.relabelPct / 100) { hosp.relabeled++; pk.relabeled = true; L('hosOut', { k: 'r' }); submitSort(pk); }
-      else { hosp.destroyed++; L('hosOut', { k: 'd' }); finish(); resolve(pk); }
+      else { hosp.destroyed++; L('hosOut', { k: 'd' }); finish(); resolve(pk); if (wk()) ret.hospital++; toReturns(1, D.hospRet, TV.modes.hospital, true); }
     } });
   };
   const exception = (pk: Pkg, extraPct = 0): 'noRead' | 'exc' | null => {
@@ -536,7 +545,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
         if (!o.days[d % 7]) continue;
         const arr = d * DAY + hm(o.arrival)!;
         const tk: OutTruck = { gi, day: d, arr, sched: arr + W.outboundLoadWindowMin, state: 'here', m3: 0, kg: 0, units: 0, pkgs: 0, inflight: 0, jobs: [] };
-        at(arr, () => { present[gi].push(tk); L('otA', { g: gi }); tryLoad(gi); });
+        at(arr, () => { present[gi].push(tk); L('otA', { g: gi }); tryLoad(gi); branchReturn(gi); });
         at(tk.sched, () => {
           tk.state = 'closing';
           // lo que no empezó a cargarse vuelve a Stage out para el próximo camión
@@ -589,7 +598,11 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
         if (!pk.length) { if (d < 7) pickups.push({ route: r, day: d, time: now, pkgs: 0 }); return; }
         routeBuf[r] = [];
         L('pmA', { r });
-        at(now + T('handover') + D.routeExit / (TV.speeds.cart * 60), () => { // el cartero lleva su carro hasta la salida
+        // el cartero trae lo que no entregó en su salida anterior: DV-1 antes del control de ruta (no puede esperar)
+        let back = 0, dv = 0;
+        if (RT.postmanPct > 0) for (let i = 0; i < pk.length; i++) if (rnd() * 100 < RT.postmanPct) { back++; dv += T('dv1'); }
+        at(now + dv + T('handover') + D.routeExit / (TV.speeds.cart * 60), () => { // el cartero lleva su carro hasta la salida
+          if (back) { EV['DV-1'] += back; EV['LM-4'] += back; if (wk()) ret.dv1 += back; setShelf(back); L('dv1', { n: back }); }
           EV['LM-12'] += pk.length; pk.forEach(() => finish());
           pickups.push({ route: r, day: d, time: now, pkgs: pk.length });
           L('pick', { r, n: pk.length });
@@ -598,12 +611,80 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     });
   }
 
+  /* paso 8: retornos, en régimen estable (las semanas anteriores fueron iguales a la simulada) */
+  const RT = W.returns, wk = (): boolean => now < WEEK;
+  const ret = { dv1: 0, branch: 0, hospital: 0, picked: 0, expired: 0, rt1: 0, destroy: 0, back: 0, boxes: 0, trips: 0, custMin: 0, shelfStart: 0, shelfAvg: 0, shelfMax: 0, stayDays: 0 };
+  // estantería LM-4: cada día se retira la misma fracción h del stock, de modo que a los holdDays días se retiró pickupPct
+  const hz = 1 - Math.pow(1 - RT.pickupPct / 100, 1 / RT.holdDays);
+  for (let a = 0; a < RT.holdDays; a++) ret.stayDays += Math.pow(1 - hz, a);
+  const dv1Week = routeTot.reduce((a, b) => a + b, 0) * RT.postmanPct / 100;
+  let shelf = Math.round((dv1Week / 7) * ret.stayDays);
+  ret.shelfStart = ret.shelfMax = shelf;
+  L('shelf0', { n: shelf });
+  function setShelf(dn: number): void { shelf += dn; if (wk() && shelf > ret.shelfMax) ret.shelfMax = shelf; }
+  /** Lo atiende quien está en despacho de carteros (tarea sin estación, antes que el sorting de rutas) o alguien ocioso. */
+  const customer = (): void => {
+    if (shelf <= 0) return;
+    setShelf(-1); if (wk()) ret.picked++; L('cust');
+    submit('branch', { pk: 0, free: true, cust: true, base: () => T('custAttend'), ...walk(D.shelfWalk), done: () => undefined });
+  };
+  // clientes y vencidos solo en los días del turno mañana: los clientes llegan durante el turno; los vencidos pasan a retornos al empezar
+  const am = W.shifts.filter(s => s.days.some(Boolean)).sort((a, b) => hm(a.start)! - hm(b.start)!)[0];
+  if (am && dv1Week > 0) {
+    const nDays = am.days.filter(Boolean).length, st = hm(am.start)!, en = hm(am.end)!, len = en > st ? en - st : en + DAY - st;
+    const perPick = (dv1Week * RT.pickupPct) / 100 / nDays, perExp = (dv1Week * (100 - RT.pickupPct)) / 100 / nDays;
+    let accP = 0, accE = 0;
+    for (let d = 0; d < 14; d++) {
+      if (!am.days[d % 7]) continue;
+      accP += perPick; const nP = Math.floor(accP); accP -= nP;
+      accE += perExp; const nE = Math.floor(accE); accE -= nE;
+      at(d * DAY + st, () => { const n = Math.min(nE, shelf); if (!n) return; setShelf(-n); if (wk()) ret.expired += n; L('exp', { n }); toReturns(n, D.expired, TV.modes.containers, false); });
+      for (let i = 0; i < nP; i++) at(d * DAY + st + rnd() * len, customer);
+    }
+  }
+  /* RT-1 y RT-2: baja prioridad, solo con personal ocioso */
+  const fillBox = { d: 0, r: 0 };
+  let boxStock = 0, rt2Loading = false;
+  function toReturns(n: number, dist: number, mode: TravelMode, destroy: boolean): void {
+    L('rtIn', { n });
+    for (let i = 0; i < n; i++) submit('returns', { pk: 1, base: () => T('rt1'), ...mv(dist, mode, 1 / cap.containerPkgs), done: () => {
+      const k = destroy || rnd() * 100 < RT.destroyPct ? 'd' : 'r';
+      EV['RT-1']++;
+      if (wk()) { ret.rt1++; if (k === 'd') ret.destroy++; else ret.back++; }
+      L('rt1', { k });
+      if (++fillBox[k] >= RT.pkgsPerBox) { fillBox[k] = 0; boxStock++; if (wk()) ret.boxes++; L('box', { k }); if (boxStock >= RT.rt2.maxBoxes) rt2(); }
+    } });
+  }
+  /** El camión RT-2 se lleva las cajas llenas: una vez por semana o cuando se juntan maxBoxes. */
+  function rt2(): void {
+    if (rt2Loading || !boxStock) return;
+    rt2Loading = true;
+    let left = boxStock;
+    if (wk()) ret.trips++;
+    L('rt2A', { n: boxStock });
+    for (let i = boxStock; i > 0; i--) submit('returns', { pk: 0, base: () => T('rt2Load'), ...mv(D.rt2, TV.modes.load), done: () => {
+      boxStock--; EV['RT-2']++;
+      if (--left === 0) { rt2Loading = false; L('rt2D'); if (boxStock >= RT.rt2.maxBoxes) rt2(); }
+    } });
+  }
+  for (let d = 0; d < 14; d++) if (d % 7 === RT.rt2.day) at(d * DAY + hm(RT.rt2.time)!, rt2);
+  /** Sucursales: en uno de cada dos camiones vuelve el % de lo despachado a esa sucursal en los dos envíos. */
+  const outCount = G.map(() => 0), trucksWeek = G.map(g => (g.dest === 'branch' ? 0 : g.outbound.reduce((a, o) => a + o.days.filter(Boolean).length, 0)));
+  function branchReturn(gi: number): void {
+    if (++outCount[gi] % 2 || !trucksWeek[gi]) return;
+    const n = Math.round((((2 * groupTot[gi]) / trucksWeek[gi]) * RT.branchPct) / 100);
+    if (!n) return;
+    if (wk()) ret.branch += n;
+    toReturns(n, D.branchRet[gi], TV.modes.containers, false);
+  }
+
   /* ------------------------ muestreo ------------------------ */
   const snapshot = (): Wip => ({
     unload: pools.unload.qPk, decon: pools.decon.qPk, sort: pools.sort.qPk, hospital: pools.hospital.qPk, baskets: inBaskets.n,
     reverify: pools.reverify.qPk, branch: pools.branch.qPk,
     stage: stagePk.reduce((a, b, i) => a + (G[i].dest === 'branch' ? 0 : b), 0),
     routes: routeBuf.reduce((a, b) => a + b.length, 0),
+    shelf,
   });
   const samples: Sample[] = [];
   const sample = (): void => {
@@ -626,6 +707,9 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
   const samplesOut = samples.filter(s => s.t <= Math.max(WEEK, endT) + 60);
 
   if (unfinished > 0) warnings.push({ key: 'w.unfinished', params: { n: unfinished } });
+  const wkS = samples.filter(s => s.t < WEEK);
+  ret.shelfAvg = wkS.length ? wkS.reduce((a, s) => a + s.wip.shelf, 0) / wkS.length : shelf;
+  if (RT.shelfCapacity > 0 && ret.shelfMax > RT.shelfCapacity) warnings.push({ key: 'w.shelfFull', params: { max: ret.shelfMax, cap: RT.shelfCapacity } });
   const carried = dayFin.slice(7).reduce((a, b) => a + b, 0);
 
   /* ------------------------ resultados ------------------------ */
@@ -670,5 +754,6 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     events: EV, hourly: { sorted: hourly.sorted, rc0: hourly.rc0 }, samples: samplesOut, warnings, log,
     routeTotals: routeTot,
     travel: { km: travel.m / 1000, hours: travel.min / 60 },
+    returns: ret,
   };
 }
