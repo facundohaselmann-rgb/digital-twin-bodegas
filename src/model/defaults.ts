@@ -1,4 +1,4 @@
-import { PROCESSES, type Days, type ProcessKey, type Project, type SortingGroup, type Warehouse, type Shift, type InboundTruck, type Tri, type TimeKey, type Sorter } from './types';
+import { PROCESSES, type Days, type ProcessKey, type Project, type SortingGroup, type Warehouse, type Shift, type InboundTruck, type Tri, type TimeKey, type Sorter, type FixedCost, type Discrepancies, type Scenario, type SortingType } from './types';
 
 let counter = 0;
 export function uid(prefix = 'id'): string {
@@ -20,11 +20,32 @@ export const DEFAULT_TIMES: Record<TimeKey, Tri> = {
   swap: { min: 0.3, mode: 0.5, max: 1 },            // min por canasto lleno
   relabel: { min: 2, mode: 3, max: 5 },             // min por paquete en hospital
   reverify: { min: 4, mode: 5, max: 7 },            // s por paquete
+  missortFix: { min: 0.3, mode: 0.5, max: 1 },      // min por paquete mal clasificado (se corrige en el momento)
   container: { min: 1.5, mode: 2, max: 3 },         // min por contenedor
   branchSort: { min: 5, mode: 6, max: 9 },          // s por paquete
+  search: { min: 5, mode: 10, max: 20 },            // min por paquete faltante de cartero
   load: { min: 1, mode: 1.5, max: 2.5 },            // min por unidad
   handover: { min: 2, mode: 3, max: 5 },            // min por ruta
 };
+
+/** Costos fijos de catálogo (USD por mes, supuestos editables). Los de sorter y PTL cuentan solo si la bodega los usa. */
+export function defaultFixedCosts(): FixedCost[] {
+  const c = (category: FixedCost['category'], name: string, usdMonth: number, sorting: FixedCost['sorting'] = ''): FixedCost => ({ id: uid('c'), category, name, usdMonth, sorting });
+  return [
+    c('rent', 'Alquiler del depósito', 8000),
+    c('utilities', 'Energía, agua e internet', 1500),
+    c('security', 'Seguridad y vigilancia', 2500),
+    c('cleaning', 'Limpieza y mantenimiento edilicio', 800),
+    c('equipment', 'PDAs (10 × 25 USD)', 250),
+    c('equipment', 'Transpaletas y carros', 200),
+    c('equipment', 'Pick to Light (leasing + mantenimiento)', 1200, 'ptl'),
+    c('equipment', 'Sorter automático (leasing + mantenimiento)', 6000, 'sorter'),
+    c('it', 'Sistemas y licencias (WMS, Tracking)', 500),
+    c('insurance', 'Seguros', 400),
+    c('overhead', 'Supervisión y administración', 3000),
+  ];
+}
+export const DEFAULT_DISCREPANCIES: Discrepancies = { customsPct: 0.3, missortPct: { manual: 1, ptl: 0.3, sorter: 0.1 }, postmanPct: 0.5, postmanFoundPct: 50 };
 
 /** Valores de catálogo (supuestos editables). */
 export const DEFAULT_SORTER: Sorter = { inductionPoints: 2, machinePerHour: 3000, chutes: 24, maxKg: 30, maxLengthCm: 80, maxWidthCm: 60, maxHeightCm: 60, noReadPct: 2 };
@@ -88,11 +109,13 @@ export function jamaicaWarehouse(): Warehouse {
     shifts,
     outboundLoadWindowMin: 30,
     volumePct: 100,
-    costs: { overtimeMultiplier: 1.5 },
+    costs: { overtimeMultiplier: 1.5, relabelUsd: 0.05, fixed: defaultFixedCosts() },
     sorting: { type: 'manual', sorter: structuredClone(DEFAULT_SORTER) },
     hospital: { exceptionPct: 1.5, relabelPct: 75 },
     multiskill: { bufferMin: 10, changeMin: 5, priority: [...PROCESSES] },
     cptLeadMin: 240,
+    discrepancies: structuredClone(DEFAULT_DISCREPANCIES),
+    replicas: 20,
   };
 }
 
@@ -109,7 +132,53 @@ export function blankWarehouse(): Warehouse {
   return w;
 }
 
+/** Bodega modelo genérica: todas las funciones activas y sorting con Pick to Light. Valores supuestos editables. */
+export function modelWarehouse(): Warehouse {
+  const w = jamaicaWarehouse();
+  const truck = (name: string, arrival: string, packages: number, boxes: number, uld: number, loose: number): InboundTruck =>
+    ({ id: uid('i'), name, days: [...MON_SAT] as Days, arrival, packages, mix: { boxes, uld, loose }, pkgsPerBox: 50, pkgsPerUld: 160, volumeVarPct: 10, timeVarMin: 30 });
+  const two = (g: SortingGroup, second: string): SortingGroup => { g.outbound.push({ id: uid('o'), days: [...MON_SAT] as Days, arrival: second }); return g; };
+  return {
+    ...w,
+    id: uid('w'), name: 'Bodega Modelo', country: '', notes: 'Plantilla genérica con Pick to Light, hospital, discrepancias, multiskill y costos.',
+    packageProfile: { weightKg: 1.8, lengthCm: 28, widthCm: 20, heightCm: 12, variationPct: 25 },
+    inbound: [truck('Camión 1', '06:30', 1800, 60, 30, 10), truck('Camión 2', '11:00', 1700, 70, 20, 10), truck('Camión 3', '16:00', 1500, 50, 30, 20)],
+    groups: [
+      two(group('Norte', 15, true, 'stageout', '13:00', [['Norte 1', true], ['Norte 2', true]]), '21:30'),
+      two(group('Sur', 15, true, 'stageout', '13:30', [['Sur 1', true], ['Sur 2', true]]), '22:00'),
+      group('Este', 12, true, 'stageout', '14:00', [['Este 1', true], ['Este 2', true]]),
+      group('Oeste', 12, true, 'stageout', '14:30', [['Oeste 1', true], ['Oeste 2', true]]),
+      group('Centro', 10, true, 'stageout', '15:00', [['Centro', true]]),
+      group('Corporativo', 6, false, 'stageout', '16:00', [['Corporativo', true]]),
+      group('Ciudad', 30, false, 'branch', null, [['Zona A', true], ['Zona B', true], ['Zona C', true], ['Zona D', true]]),
+    ],
+    routes: { count: 12, windows: [
+      { id: uid('v'), name: 'Mañana', days: [...MON_SAT] as Days, first: '08:00', everyMin: 8 },
+      { id: uid('v'), name: 'Tarde', days: [...MON_SAT] as Days, first: '14:00', everyMin: 8 },
+    ] },
+    capacity: { ...w.capacity, truckM3: 24, truckKg: 5000, stations: { sort: 6, reverify: 3, branch: 3 } },
+    shifts: [
+      { ...w.shifts[0], id: uid('t'), staff: staff({ unload: 2, decon: 2, sort: 4, hospital: 1, reverify: 2, branch: 2, load: 2 }) },
+      { ...w.shifts[1], id: uid('t'), staff: staff({ unload: 2, decon: 1, sort: 3, reverify: 2, branch: 2, load: 2 }) },
+    ],
+    sorting: { type: 'ptl', sorter: structuredClone(DEFAULT_SORTER) },
+  };
+}
+
+/** Siempre 3 escenarios: base, +20 % de volumen y otro tipo de sorting. */
+export function defaultScenarios(w: Warehouse): Scenario[] {
+  const alt: Record<SortingType, [SortingType, string]> = { manual: ['ptl', 'Pick to Light'], ptl: ['sorter', 'Sorter automático'], sorter: ['manual', 'Manual con PDA'] };
+  const vol = structuredClone(w); vol.volumePct = Math.round(w.volumePct * 1.2);
+  const srt = structuredClone(w); srt.sorting.type = alt[w.sorting.type][0];
+  return [
+    { id: uid('e'), name: 'Base', warehouse: w },
+    { id: uid('e'), name: '+20 % volumen', warehouse: vol },
+    { id: uid('e'), name: alt[w.sorting.type][1], warehouse: srt },
+  ];
+}
+
 export function newProject(w: Warehouse = jamaicaWarehouse()): Project {
   const now = new Date().toISOString();
-  return { format: 'dtwin', version: 2, name: w.name, createdAt: now, updatedAt: now, warehouse: w, scenarios: [] };
+  const scenarios = defaultScenarios(w);
+  return { format: 'dtwin', version: 2, name: w.name, createdAt: now, updatedAt: now, warehouse: w, scenarios, activeScenario: scenarios[0].id };
 }

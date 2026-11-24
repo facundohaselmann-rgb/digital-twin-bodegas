@@ -23,7 +23,7 @@ await pg.waitForTimeout(300);
 await shot('plan.png');
 await pg.click('.ctl .btn.pri'); await pg.waitForTimeout(1200); await pg.click('.ctl .btn.pri');
 await pg.click('nav button:nth-child(2)'); await pg.waitForTimeout(400); await shot('results.png');
-await pg.click('nav button:nth-child(3)'); await pg.waitForTimeout(300); await shot('config.png');
+await pg.click('nav button:nth-child(4)'); await pg.waitForTimeout(300); await shot('config.png');
 // editar dotación del turno día (sorting = 1) y verificar que se re-simula
 const before = await pg.evaluate(() => document.querySelector('.runinfo')?.textContent);
 const inp = pg.locator('.shift').first().locator('.staffgrid input').nth(2);

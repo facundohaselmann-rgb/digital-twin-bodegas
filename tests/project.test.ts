@@ -36,6 +36,22 @@ describe('archivo de proyecto', () => {
     w.sorting.type = 'sorter'; w.sorting.sorter.inductionPoints = 2; w.shifts[0].staff.sort = 3; w.capacity.stations.sort = 4;
     expect(normalize(w).some(x => x.key === 'w.staffGtStations' && x.params?.stations === 2)).toBe(true);
   });
+  it('un proyecto nuevo trae 3 escenarios y edita el primero', () => {
+    const p = newProject(jamaicaWarehouse());
+    expect(p.scenarios.map(s => s.name)).toEqual(['Base', '+20 % volumen', 'Pick to Light']);
+    expect(p.activeScenario).toBe(p.scenarios[0].id);
+    expect(p.scenarios[1].warehouse.volumePct).toBe(120);
+  });
+  it('los proyectos sin escenarios se abren con los 3 por defecto y los escenarios se conservan al guardar', () => {
+    const old = newProject(jamaicaWarehouse()) as unknown as { scenarios: unknown[]; activeScenario?: string };
+    old.scenarios = []; delete old.activeScenario;
+    const q = parseProject(JSON.stringify(old));
+    expect(q.scenarios).toHaveLength(3);
+    expect(q.scenarios.find(s => s.id === q.activeScenario)!.warehouse).toBe(q.warehouse);
+    q.scenarios[2].name = 'Otro';
+    const q2 = parseProject(serialize(q));
+    expect(q2.scenarios.map(s => s.name)).toEqual(['Base', '+20 % volumen', 'Otro']);
+  });
   it('la bodega en blanco es válida y simulable', () => {
     const w = blankWarehouse();
     const warnings = normalize(w);

@@ -227,3 +227,20 @@ td input[type=time]{padding:3px 4px;width:auto}
 @media (max-width:760px){.prov .hd{grid-template-columns:1fr 1fr}}
 .svcs{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center}
 @media (max-width:640px){main{padding:12px 16px 40px}header{padding:10px 16px}.runinfo{margin-left:0}}
+.dim td{opacity:.5}
+.print-only{display:none}
+.stat .v small{font-size:13px;font-weight:500;color:var(--text-2)}
+.badge{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:20px}
+.badge.ok{background:var(--green-l);color:var(--green-d)}
+tr.active td{background:var(--green-l)}
+/* reporte en PDF: impresión de Chrome → "Guardar como PDF" */
+@media print{
+  :root{color-scheme:light}
+  body{background:#fff}
+  header,.cfgbar,.warns,.toast,nav,.btn{display:none!important}
+  .print-only{display:block;font-size:18px;margin-bottom:10px}
+  main{padding:0;max-width:none}
+  .card,.stat{break-inside:avoid;border-color:#ccc}
+  .grid2{grid-template-columns:1fr 1fr}
+  .chart .tip{display:none}
+}

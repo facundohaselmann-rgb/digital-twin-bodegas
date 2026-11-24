@@ -2,14 +2,14 @@ import { useState } from 'preact/hooks';
 import { useWh } from '../store';
 import { Check, DaysToggle, Field, Num, Select, Text, Time } from '../components/inputs';
 import { nf, t } from '../../i18n';
-import { PROCESSES, TIME_KEYS, type Days, type TimeKey, type Warehouse } from '../../model/types';
+import { COST_CATEGORIES, PROCESSES, TIME_KEYS, type Days, type TimeKey, type Warehouse } from '../../model/types';
 import { MON_SAT, uid } from '../../model/defaults';
 import { SECOND_KEYS } from '../../engine/simulate';
 import { DAY, fmtHM, hm } from '../../model/time';
 
 const PER: Record<TimeKey, string> = {
   unloadBox: 'per.box', unloadUld: 'per.uld', unloadLoose: 'per.pkg', openBox: 'per.box', emptyUld: 'per.uld', sort: 'per.pkg',
-  sortPtl: 'per.pkg', induct: 'per.pkg', relabel: 'per.pkg', swap: 'per.basket', reverify: 'per.pkg', container: 'per.container', branchSort: 'per.pkg', load: 'per.unit', handover: 'per.route',
+  sortPtl: 'per.pkg', induct: 'per.pkg', relabel: 'per.pkg', missortFix: 'per.pkg', search: 'per.pkg', swap: 'per.basket', reverify: 'per.pkg', container: 'per.container', branchSort: 'per.pkg', load: 'per.unit', handover: 'per.route',
 };
 
 export function ConfigTab() {
@@ -18,6 +18,8 @@ export function ConfigTab() {
       <GeneralCard />
       <ProfileCard />
       <ProcessesCard />
+      <DiscrepanciesCard />
+      <CostsCard />
       <InboundCard />
       <ShiftsCard />
       <GroupsCard />
@@ -43,6 +45,7 @@ function GeneralCard() {
       <div class="frow">
         <Field label={t('cfg.volumePct')} hint={t('cfg.volumeHint')}><Num path="volumePct" min={1} step={5} /></Field>
         <Field label={t('cfg.seed')} w={160}><Num path="seed" min={1} step={1} /></Field>
+        <Field label={t('cfg.replicas')} hint={t('cfg.replicasHint')} w={200}><Num path="replicas" min={1} max={100} step={1} /></Field>
         <div class="fend"><button class="btn sm" onClick={() => update(w => (w.seed = 1 + Math.floor(Math.random() * 99999)))}>{t('cfg.newSeed')}</button></div>
       </div>
     </div>
@@ -231,7 +234,6 @@ function ShiftsCard() {
           o.shifts.push(last ? { ...structuredClone(last), id: uid('t'), name: `${t('cfg.shiftName')} ${o.shifts.length + 1}`, night: false, overtimeHours: 0 }
             : { id: uid('t'), name: `${t('cfg.shiftName')} 1`, days: [...MON_SAT] as Days, start: '06:00', end: '14:00', breaks: [], productivityPct: 100, costPerHour: 5, night: false, overtimeHours: 0, staff: { unload: 1, decon: 1, sort: 2, hospital: 0, reverify: 1, branch: 1, load: 1 } });
         })}>{t('cfg.addShift')}</button>
-        <Field label={t('cfg.otMult')} w={220}><Num path="costs.overtimeMultiplier" min={1} step={0.1} /></Field>
       </div>
     </div>
   );
@@ -280,6 +282,54 @@ function GroupsCard() {
       ))}
       <button class="btn sm" onClick={() => update(o => o.groups.push({ id: uid('g'), name: `${t('cfg.group')} ${o.groups.length + 1}`, confirmed: false, sharePct: 0, reverify: true, dest: 'stageout',
         services: [{ id: uid('s'), name: 'Servicio 1', confirmed: false, weight: 1 }], outbound: [{ id: uid('o'), days: [...MON_SAT] as Days, arrival: '16:00' }], profile: null }))}>{t('cfg.addGroup')}</button>
+    </div>
+  );
+}
+
+function DiscrepanciesCard() {
+  return (
+    <div class="card">
+      <h2>{t('cfg.discrepancies')}</h2>
+      <div class="sub">{t('cfg.discSub')}</div>
+      <div class="frow">
+        <Field label={t('cfg.customsPct')}><Num path="discrepancies.customsPct" min={0} max={100} /></Field>
+        <Field label={t('cfg.postmanPct')}><Num path="discrepancies.postmanPct" min={0} max={100} /></Field>
+        <Field label={t('cfg.postmanFound')}><Num path="discrepancies.postmanFoundPct" min={0} max={100} /></Field>
+      </div>
+      <div class="frow">
+        <Field label={t('cfg.missortManual')}><Num path="discrepancies.missortPct.manual" min={0} max={100} /></Field>
+        <Field label={t('cfg.missortPtl')}><Num path="discrepancies.missortPct.ptl" min={0} max={100} /></Field>
+        <Field label={t('cfg.missortSorter')}><Num path="discrepancies.missortPct.sorter" min={0} max={100} /></Field>
+      </div>
+    </div>
+  );
+}
+
+function CostsCard() {
+  const { w, update } = useWh();
+  const month = w.costs.fixed.reduce((a, f) => a + (!f.sorting || f.sorting === w.sorting.type ? f.usdMonth : 0), 0);
+  return (
+    <div class="card">
+      <h2>{t('cfg.costs')}</h2>
+      <div class="sub">{t('cfg.costsSub')}</div>
+      <div class="tblwrap"><table>
+        <thead><tr><th>{t('cfg.fixedItem')}</th><th>{t('cfg.category')}</th><th>{t('cfg.usdMonth')}</th><th>{t('cfg.appliesTo')}</th><th></th></tr></thead>
+        <tbody>{w.costs.fixed.map((f, i) => (
+          <tr key={f.id} class={f.sorting && f.sorting !== w.sorting.type ? 'dim' : ''}>
+            <td><Text path={`costs.fixed.${i}.name`} width={190} /></td>
+            <td><Select path={`costs.fixed.${i}.category`} options={COST_CATEGORIES.map(c => [c, t('cc.' + c)])} /></td>
+            <td><Num path={`costs.fixed.${i}.usdMonth`} min={0} step={50} width={90} /></td>
+            <td><Select path={`costs.fixed.${i}.sorting`} options={[['', t('cfg.always')], ['manual', t('cfg.stManual')], ['ptl', t('cfg.stPtl')], ['sorter', t('cfg.stSorter')]]} /></td>
+            <td><button class="x" title={t('remove')} onClick={() => { if (confirm(t('cfg.confirmDel', { name: f.name }))) update(o => o.costs.fixed.splice(i, 1)); }}>×</button></td>
+          </tr>
+        ))}</tbody>
+      </table></div>
+      <div class="frow" style={{ marginTop: '8px', alignItems: 'flex-end' }}>
+        <button class="btn sm" onClick={() => update(o => o.costs.fixed.push({ id: uid('c'), category: 'overhead', name: t('cfg.fixedItem'), usdMonth: 0, sorting: '' }))}>{t('cfg.addCost')}</button>
+        <Field label={t('cfg.relabelUsd')} w={220}><Num path="costs.relabelUsd" min={0} step={0.01} /></Field>
+        <Field label={t('cfg.otMult')} w={220}><Num path="costs.overtimeMultiplier" min={1} step={0.1} /></Field>
+      </div>
+      <div class="hint">{t('cfg.fixedMonth', { usd: nf(month) })}</div>
     </div>
   );
 }

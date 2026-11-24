@@ -3,15 +3,18 @@ import { WhContext, type Updater } from './store';
 import { ConfigTab } from './tabs/ConfigTab';
 import { PlanTab } from './tabs/PlanTab';
 import { ResultsTab } from './tabs/ResultsTab';
+import { ScenariosTab, type Comparison, type KpiSummaries } from './tabs/ScenariosTab';
 import { getLang, nf, setLang, t, type Lang } from '../i18n';
 import type { Project, Warehouse, Warning } from '../model/types';
-import { blankWarehouse, jamaicaWarehouse, newProject } from '../model/defaults';
+import { blankWarehouse, jamaicaWarehouse, modelWarehouse, newProject, uid } from '../model/defaults';
 import { normalize } from '../model/normalize';
-import { runSimulation } from '../engine/runner';
+import { CANCELLED, runBatch, runSimulation } from '../engine/runner';
+import { KPI_KEYS, summarize, type Kpis } from '../engine/kpis';
 import type { SimResult } from '../engine/simulate';
 import { autosave, fsSupported, isSaved, loadAutosave, markSaved, openProjectFs, readProjectFile, saveProject, type FsHandle } from '../storage/project';
 
-type Tab = 'plan' | 'results' | 'config';
+type Tab = 'plan' | 'results' | 'scenarios' | 'config';
+const summarizeRuns = (runs: Kpis[]): KpiSummaries => Object.fromEntries(KPI_KEYS.map(k => [k, summarize(runs.map(x => x[k]))])) as KpiSummaries;
 interface Run { w: Warehouse; r: SimResult; warnings: Warning[]; ms: number }
 
 function warnText(x: Warning): string {
@@ -29,6 +32,9 @@ export function App() {
   const [run, setRun] = useState<Run | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
+  const [rep, setRep] = useState<{ s: KpiSummaries | null; progress: number | null }>({ s: null, progress: null });
+  const [cmp, setCmp] = useState<Comparison | null>(null);
+  const [cmpProgress, setCmpProgress] = useState<number | null>(null);
   const [tab, setTab] = useState<Tab>(() => { try { return (localStorage.getItem('dtw-tab') as Tab) || 'plan'; } catch { return 'plan'; } });
   const [toast, setToast] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
@@ -36,7 +42,18 @@ export function App() {
 
   const say = (m: string) => { setToast(m); setTimeout(() => setToast(''), 2600); };
   const update: Updater = fn => {
-    setProject(p => { const n = structuredClone(p); fn(n.warehouse); n.name = n.warehouse.name; n.updatedAt = new Date().toISOString(); return n; });
+    updateProject(n => { fn(n.warehouse); n.name = n.warehouse.name; });
+  };
+  /** Cambios a nivel proyecto; la bodega editada siempre es la del escenario activo. */
+  const updateProject = (fn: (p: Project) => void) => {
+    setProject(p => {
+      const n = structuredClone(p);
+      fn(n);
+      const act = n.scenarios.find(s => s.id === n.activeScenario) ?? n.scenarios[0];
+      n.activeScenario = act.id; n.warehouse = act.warehouse;
+      n.updatedAt = new Date().toISOString();
+      return n;
+    });
     setDirty(true);
   };
 
@@ -56,6 +73,11 @@ export function App() {
           setRun({ w, r: res.r, warnings: [...warnings, ...res.r.warnings], ms: res.ms });
           setError('');
           setRunning(false);
+          // corridas múltiples en segundo plano; se cancelan si cambia algo
+          setRep({ s: null, progress: 0 });
+          runBatch([w], w.replicas, p => { if (my === seq.current) setRep({ s: null, progress: p }); })
+            .then(rs => { if (my === seq.current) setRep({ s: summarizeRuns(rs[0]), progress: null }); })
+            .catch(e => { if ((e as Error).message !== CANCELLED && my === seq.current) setRep({ s: null, progress: null }); });
         }).catch(fail);
       } catch (e) { fail(e); }
     }, 200);
@@ -86,9 +108,10 @@ export function App() {
       catch (e) { if ((e as Error).name !== 'AbortError') say(t('file.invalid')); }
     } else fileRef.current?.click();
   };
-  const doNew = (blank: boolean) => {
+  const doNew = (kind: 'jamaica' | 'model' | 'blank') => {
     if (dirty && !confirm(t('file.confirmNew'))) return;
-    setProject(newProject(blank ? blankWarehouse() : jamaicaWarehouse()));
+    setProject(newProject(kind === 'blank' ? blankWarehouse() : kind === 'model' ? modelWarehouse() : jamaicaWarehouse()));
+    setCmp(null);
     setHandle(null);
     setDirty(false);
   };
@@ -97,6 +120,18 @@ export function App() {
     document.addEventListener('keydown', k);
     return () => document.removeEventListener('keydown', k);
   });
+
+  const compare = () => {
+    const at = project.updatedAt, n = project.warehouse.replicas, names = project.scenarios.map(s => s.name);
+    const activeIdx = project.scenarios.findIndex(s => s.id === project.activeScenario);
+    const ws = project.scenarios.map(s => { const x = structuredClone(s.warehouse); normalize(x); return x; });
+    setCmpProgress(0);
+    runBatch(ws, n, setCmpProgress).then(rs => {
+      const s = rs.map(summarizeRuns);
+      setCmp({ names, s, at, n });
+      if (at === project.updatedAt) setRep({ s: s[activeIdx], progress: null }); // ya tenemos las corridas del escenario activo
+    }).catch(() => undefined).finally(() => setCmpProgress(null));
+  };
 
   const switchLang = (l: Lang) => { setLang(l); setLangState(l); document.documentElement.lang = l; };
 
@@ -111,8 +146,8 @@ export function App() {
           <details class="menu">
             <summary class="btn">{t('file.new')} ▾</summary>
             <div class="menu-list">
-              <button onClick={e => { (e.currentTarget.closest('details') as HTMLDetailsElement).open = false; doNew(false); }}>{t('file.newJamaica')}</button>
-              <button onClick={e => { (e.currentTarget.closest('details') as HTMLDetailsElement).open = false; doNew(true); }}>{t('file.newBlank')}</button>
+              {([['jamaica', 'file.newJamaica'], ['model', 'file.newModel'], ['blank', 'file.newBlank']] as const).map(([k, l]) =>
+                <button onClick={e => { (e.currentTarget.closest('details') as HTMLDetailsElement).open = false; doNew(k); }}>{t(l)}</button>)}
             </div>
           </details>
           <button class="btn" onClick={doOpen}>{t('file.open')}</button>
@@ -129,7 +164,7 @@ export function App() {
           </div>
         </div>
         <nav>
-          {(['plan', 'results', 'config'] as Tab[]).map(k => <button class={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{t('tab.' + k)}</button>)}
+          {(['plan', 'results', 'scenarios', 'config'] as Tab[]).map(k => <button class={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{t('tab.' + k)}</button>)}
         </nav>
         <span class="runinfo">{running ? t('run.running') : run ? t('run.info', { pkgs: nf(run.r.totals.pkgs), ms: nf(run.ms), seed: run.r.seed }) : ''}</span>
       </header>
@@ -137,7 +172,12 @@ export function App() {
         {error && <div class="warns"><div class="warn">⚠ {t('run.error', { msg: error })}</div></div>}
         {run && run.warnings.length > 0 && <div class="warns">{run.warnings.map(x => <div class="warn">⚠ {warnText(x)}</div>)}</div>}
         {run && tab === 'plan' && <PlanTab key={lang} w={run.w} r={run.r} />}
-        {run && tab === 'results' && <ResultsTab w={run.w} r={run.r} />}
+        {run && tab === 'results' && <ResultsTab w={run.w} r={run.r} rep={rep} cmp={cmp} />}
+        {tab === 'scenarios' && <ScenariosTab project={project} cmp={cmp} progress={cmpProgress} stale={!!cmp && cmp.at !== project.updatedAt} onCompare={compare}
+          onActivate={id => updateProject(p => { p.activeScenario = id; })}
+          onDuplicate={() => updateProject(p => { const a = p.scenarios.find(s => s.id === p.activeScenario)!; const c = { id: uid('e'), name: t('sc.copy', { name: a.name }), warehouse: structuredClone(a.warehouse) }; p.scenarios.push(c); p.activeScenario = c.id; })}
+          onRename={(id, name) => updateProject(p => { p.scenarios.find(s => s.id === id)!.name = name; })}
+          onDelete={id => updateProject(p => { p.scenarios = p.scenarios.filter(s => s.id !== id); })} />}
         {tab === 'config' && <><div class="cfgbar"><span class="note">{t('cfg.note')}</span></div><ConfigTab /></>}
       </main>
       <div class={'toast ' + (toast ? 'on' : '')}>{toast}</div>
