@@ -34,6 +34,55 @@ await pg.click('.langsw button:nth-child(2)'); await pg.waitForTimeout(300);
 const navEn = await pg.evaluate(() => document.querySelector('nav')?.textContent);
 console.log('nav EN:', navEn);
 await pg.click('nav button:nth-child(1)'); await pg.waitForTimeout(500); await shot('plan_en.png');
+
+// editor de disposición: arrastrar una zona cambia las distancias y vuelve a simular
+pg.on('dialog', d => d.accept(d.type() === 'prompt' ? (/meters|metros/.test(d.message()) ? '40' : '1') : undefined));
+await pg.click('.ctl button:has-text("✎")');
+await pg.waitForSelector('#layout');
+const firstDist = () => pg.evaluate(() => document.querySelectorAll('.edfoot table')[1]?.querySelector('tbody tr td:nth-child(3)')?.textContent);
+const d0 = await firstDist();
+const z = await pg.locator('#layout .ez.k-group rect:not(.hd)').first().boundingBox();
+const run0 = await pg.evaluate(() => document.querySelector('.runinfo')?.textContent);
+await pg.mouse.move(z.x + z.width / 2, z.y + z.height / 2); await pg.mouse.down();
+await pg.mouse.move(z.x + z.width / 2 - 60, z.y + z.height / 2 + 4, { steps: 5 }); await pg.mouse.up();
+await pg.waitForFunction(b => document.querySelector('.runinfo')?.textContent !== b, run0, { timeout: 10000 });
+const d1 = await firstDist();
+console.log('distancia canastos → reverificación:', d0, '→', d1);
+if (d0 === d1) errs.push('mover la zona no cambió la distancia');
+// planos de fondo: DXF (con unidades), imagen y PDF
+const dxf = ['0','SECTION','2','HEADER','9','$INSUNITS','70','4','0','ENDSEC','0','SECTION','2','ENTITIES',
+  '0','LWPOLYLINE','90','4','70','1','10','0','20','0','10','60000','20','0','10','60000','20','30000','10','0','20','30000',
+  '0','CIRCLE','10','10000','20','10000','40','500','0','ENDSEC','0','EOF'].join('\n');
+const input = pg.locator('.editor input[type=file]');
+await input.setInputFiles({ name: 'plano.dxf', mimeType: 'application/dxf', buffer: Buffer.from(dxf) });
+await pg.waitForSelector('#layout path.p-cad', { state: 'attached', timeout: 10000 });
+const size = await pg.evaluate(() => [...document.querySelectorAll('.editor .fld.inl input')].map(i => i.value).join(' × '));
+console.log('DXF cargado, bodega de', size, 'm');
+if (size !== '60 × 30') errs.push('el DXF no tomó sus medidas: ' + size);
+const p2 = await b.newPage();
+await p2.setContent('<style>html,body{margin:0;overflow:hidden}</style><svg xmlns="http://www.w3.org/2000/svg" width="780" height="380" style="display:block"><rect x="10" y="10" width="760" height="360" fill="none" stroke="#000" stroke-width="4"/><line x1="10" y1="190" x2="770" y2="190" stroke="#000" stroke-width="4"/></svg>');
+const pdf = await p2.pdf({ width: '800px', height: '400px', printBackground: true });
+const png = await p2.screenshot();
+await p2.close();
+await input.setInputFiles({ name: 'plano.png', mimeType: 'image/png', buffer: png });
+await pg.waitForSelector('#layout image.p-bgimg', { state: 'attached', timeout: 10000 });
+// fijar escala: dos clics y 40 m (el diálogo se responde arriba)
+const L = await pg.locator('#layout').boundingBox();
+await pg.mouse.click(L.x + 80, L.y + 120); await pg.mouse.click(L.x + 480, L.y + 120);
+await pg.waitForTimeout(400);
+await input.setInputFiles({ name: 'plano.pdf', mimeType: 'application/pdf', buffer: pdf });
+await pg.waitForFunction(() => /plano\.pdf/.test(document.querySelector('.toast')?.textContent ?? ''), null, { timeout: 15000 });
+const ink = await pg.evaluate(async () => {
+  const img = new Image(); img.src = document.querySelector('#layout image.p-bgimg').getAttribute('href'); await img.decode();
+  const c = document.createElement('canvas'); c.width = img.width; c.height = img.height; const x = c.getContext('2d'); x.drawImage(img, 0, 0);
+  const d = x.getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] < 128) n++; return n;
+});
+console.log('PDF cargado:', await pg.evaluate(() => document.querySelector('.toast')?.textContent), '· píxeles oscuros:', ink);
+if (!ink) errs.push('el PDF se rasterizó en blanco');
+await shot('editor.png');
+await pg.click('.editor .ctl .btn.pri:last-of-type');
+await pg.waitForSelector('#plan image.p-bgimg', { state: 'attached', timeout: 10000 });
+await shot('plan_bg.png');
 const worker = await pg.evaluate(() => typeof Worker);
 console.log('Worker:', worker);
 console.log('ERRORS:', errs.length ? errs : 'ninguno');

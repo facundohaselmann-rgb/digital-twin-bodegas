@@ -1,7 +1,7 @@
 /* Archivos de proyecto (.dtwin). En Chrome/Edge se guardan directo en la
    carpeta elegida (por ejemplo, la carpeta de Google Drive para escritorio)
    con la File System Access API; en otros navegadores se descargan. */
-import type { Project, Scenario, Warehouse } from '../model/types';
+import type { PlanBackground, Project, Scenario, Warehouse } from '../model/types';
 import { defaultScenarios, jamaicaWarehouse, uid } from '../model/defaults';
 import { normalize } from '../model/normalize';
 
@@ -23,7 +23,8 @@ export function parseProject(text: string): Project {
   if (!o || o.format !== 'dtwin' || !o.warehouse) throw new Error('invalid');
   if (o.version !== 2) throw new Error('version');
   // completa lo que falte con valores por defecto y valida; si no se puede, el archivo se rechaza
-  const fix = (w: unknown): Warehouse => { const x = { ...jamaicaWarehouse(), ...(w as object) } as Warehouse; normalize(x); return x; };
+  // sin `layout` en el archivo (antes de la iteración 4) la bodega queda sin distancias, como estaba
+  const fix = (w: unknown): Warehouse => { const x = { ...jamaicaWarehouse(), layout: null, ...(w as object) } as Warehouse; normalize(x); return x; };
   o.warehouse = fix(o.warehouse);
   // proyectos sin escenarios (iteraciones 1 y 2) arrancan con los 3 escenarios por defecto
   o.scenarios = Array.isArray(o.scenarios) && o.scenarios.length
@@ -32,7 +33,18 @@ export function parseProject(text: string): Project {
   const act = o.scenarios.find((s: Scenario) => s.id === o.activeScenario) ?? o.scenarios[0];
   o.activeScenario = act.id;
   act.warehouse = o.warehouse; // la bodega que se edita es la del escenario activo
+  o.plan = planBackground(o.plan);
   return o as Project;
+}
+
+function planBackground(b: Partial<PlanBackground> | null | undefined): PlanBackground | null {
+  if (!b || (b.kind !== 'image' && b.kind !== 'dxf') || typeof b.data !== 'string') return null;
+  if (b.kind === 'image' && !/^data:image\/(png|jpeg|webp);base64,/.test(b.data)) return null;
+  if (b.kind === 'dxf' && !/^[MLZ0-9.\s-]*$/.test(b.data)) return null; // solo trazos: nada que se pueda ejecutar
+  const pos = (v: unknown): number => (typeof v === 'number' && isFinite(v) && v > 0 ? v : NaN);
+  const w = pos(b.w), h = pos(b.h), scale = pos(b.scale);
+  if (!(w && h && scale)) return null;
+  return { kind: b.kind, name: String(b.name ?? ''), data: b.data, w, h, scale };
 }
 
 const fileName = (p: Project): string => (p.name || 'bodega').replace(/[\\/:*?"<>|]+/g, '_').trim() + '.dtwin';

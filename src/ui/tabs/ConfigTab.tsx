@@ -2,7 +2,7 @@ import { useState } from 'preact/hooks';
 import { useWh } from '../store';
 import { Check, DaysToggle, Field, Num, Select, Text, Time } from '../components/inputs';
 import { nf, t } from '../../i18n';
-import { COST_CATEGORIES, PROCESSES, TIME_KEYS, type Days, type TimeKey, type Warehouse } from '../../model/types';
+import { COST_CATEGORIES, LEGS, PROCESSES, TIME_KEYS, type Days, type TimeKey, type Warehouse } from '../../model/types';
 import { MON_SAT, uid } from '../../model/defaults';
 import { SECOND_KEYS } from '../../engine/simulate';
 import { DAY, fmtHM, hm } from '../../model/time';
@@ -25,6 +25,7 @@ export function ConfigTab() {
       <GroupsCard />
       <RoutesCard />
       <CapacityCard />
+      <TravelCard />
       <TimesCard />
     </div>
   );
@@ -387,7 +388,7 @@ function ProcessesCard() {
         <Field label={t('cfg.exceptionPct')} hint={t('cfg.hospitalHint')}><Num path="hospital.exceptionPct" min={0} max={100} /></Field>
         <Field label={t('cfg.relabelPct')}><Num path="hospital.relabelPct" min={0} max={100} /></Field>
         <Field label={t('cfg.bufferMin')} hint={t('cfg.bufferHint')}><Num path="multiskill.bufferMin" min={0} /></Field>
-        <Field label={t('cfg.changeMin')}><Num path="multiskill.changeMin" min={0} /></Field>
+        <Field label={t('cfg.changeMin')} hint={t('cfg.changeHint')}><Num path="multiskill.changeMin" min={0} /></Field>
       </div>
       <div class="sub" style={{ margin: '6px 0 4px' }}>{t('cfg.priority')}</div>
       <div class="svcs">
@@ -423,6 +424,26 @@ function CapacityCard() {
         <Field label={t('cfg.stRv')}><Num path="capacity.stations.reverify" min={1} step={1} /></Field>
         <Field label={t('cfg.stBr')}><Num path="capacity.stations.branch" min={1} step={1} /></Field>
       </div>
+    </div>
+  );
+}
+
+function TravelCard() {
+  const modes: [string, string][] = [['walk', t('tm.walk')], ['cart', t('tm.cart')], ['jack', t('tm.jack')]];
+  return (
+    <div class="card">
+      <h2>{t('cfg.travel')}</h2>
+      <div class="sub">{t('cfg.travelSub')}</div>
+      <div class="frow">
+        <Field label={t('cfg.spWalk')}><Num path="travel.speeds.walk" min={0.05} step={0.1} /></Field>
+        <Field label={t('cfg.spCart')}><Num path="travel.speeds.cart" min={0.05} step={0.1} /></Field>
+        <Field label={t('cfg.spJack')}><Num path="travel.speeds.jack" min={0.05} step={0.1} /></Field>
+        <Field label={t('cfg.handle')}><Num path="travel.handleSec" min={0} step={5} /></Field>
+      </div>
+      <div class="frow">
+        {LEGS.map(l => <Field label={t('leg.' + l)} w={190}><Select path={`travel.modes.${l}`} options={modes} /></Field>)}
+      </div>
+      <div class="hint">{t('cfg.travelHint')}</div>
     </div>
   );
 }

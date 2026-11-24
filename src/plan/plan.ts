@@ -1,7 +1,8 @@
-/* Plano 2D animado: se dibuja en SVG a partir de la configuración y se
+/* Plano 2D animado: se dibuja en SVG a partir del layout (metros) y se
    anima reproduciendo el log de eventos de la simulación. */
 import type { LogEv, Sample, SimResult } from '../engine/simulate';
-import { PROCESSES, type ProcessKey, type Warehouse } from '../model/types';
+import { PROCESSES, type Layout, type PlanBackground, type ProcessKey, type Warehouse, type Zone, type ZoneKind } from '../model/types';
+import { autoLayout } from '../model/layout';
 import { DAY, fmtHM, hm } from '../model/time';
 import { nf, t } from '../i18n';
 
@@ -54,126 +55,200 @@ export function apply(S: PlayState, e: LogEv, fx?: Fx): void {
 }
 
 /* --------------------------- geometría --------------------------- */
+/** Unidades de dibujo por metro (con 20, los textos del plano miden lo mismo que en el esquemático original). */
+export const K = 20;
+type Box = { x: number; y: number; w: number; h: number };
 export interface Geo {
   so: number[]; br: number[];
-  bk: Record<string, { x: number; y: number; w: number; h: number }>;
-  lane: Record<number, { cy: number }>;
-  route: { x: number; y: number; w: number; h: number }[];
+  bk: Record<string, Box>;
+  lane: Record<number, { cx: number; cy: number }>;
+  door: Record<number, { cx: number; cy: number }>;
+  route: Box[];
   dots: Record<ProcessKey, number>;
+  sortC: [number, number]; rvC: [number, number]; brC: [number, number];
 }
 
-export function buildPlan(svg: SVGSVGElement, w: Warehouse): Geo {
-  const gs = w.groups, so: number[] = [], br: number[] = [];
-  gs.forEach((g, i) => (g.dest === 'branch' ? br : so).push(i));
-  const G: Geo = { so, br, bk: {}, lane: {}, route: [], dots: {} as Record<ProcessKey, number> };
-  const zones: { gi: number; zx: number; zw: number; y0: number; y1: number }[] = [];
-  const zl = (list: number[], y0: number, y1: number, maxW: number) => {
-    const x0 = 140, x1 = 640, n = list.length;
-    if (!n) return;
-    const zw = Math.min(maxW, (x1 - x0 - 8 * (n - 1)) / n);
-    list.forEach((gi, k) => {
-      const g = gs[gi], m = g.services.length, zx = x0 + k * (zw + 8);
-      const cols = Math.max(1, Math.min(m, Math.floor((zw - 8) / 46)));
-      const rows = Math.max(1, Math.ceil(m / cols));
-      const bw = Math.min(74, (zw - 10 - 6 * (cols - 1)) / cols), bh = Math.min(58, (y1 - y0 - 32 - 6 * (rows - 1)) / rows);
-      zones.push({ gi, zx, zw, y0, y1 });
-      g.services.forEach((_, j) => { G.bk[gi + '-' + j] = { x: zx + 5 + (j % cols) * (bw + 6), y: y0 + 26 + Math.floor(j / cols) * (bh + 6), w: bw, h: bh }; });
-    });
-  };
-  zl(so, 30, 238, 170);
-  zl(br, 300, 500, 280);
+/** Layout a dibujar: el de la bodega o, si todavía no tiene, el de por defecto. */
+export const viewLayout = (w: Warehouse): Layout => w.layout ?? autoLayout(w);
 
-  let h = `<defs><pattern id="pgrid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="var(--grid)" stroke-width="1"/></pattern></defs>`;
-  h += `<rect class="p-floor" x="10" y="10" width="1000" height="500"/><rect class="p-wall" x="10" y="10" width="1000" height="500" rx="4"/>`;
-  /* inbound */
-  h += `<rect class="p-door" x="6" y="150" width="9" height="100"/>`;
-  h += `<rect class="p-area" x="20" y="130" width="106" height="122" rx="6"/><text class="p-az" x="27" y="144">${t('plan.inbound')}</text><text class="p-sm" x="27" y="155">${t('plan.unloading')}</text>`;
-  h += `<text class="p-sm" id="ind" x="27" y="167"></text>`;
-  for (let i = 0; i < 24; i++) h += `<rect id="ibx${i}" class="p-box" x="${27 + (i % 8) * 11.5}" y="${173 + Math.floor(i / 8) * 11}" width="9" height="9" rx="1.2" style="display:none"/>`;
-  h += `<text class="p-md" id="stB" x="27" y="220"></text><text class="p-md" id="stU" x="27" y="232"></text><text class="p-md" id="stL" x="27" y="244"></text>`;
-  /* desconsolidación */
-  h += `<rect class="p-area" x="20" y="260" width="106" height="92" rx="6"/><text class="p-az" x="26" y="274" style="font-size:7.6px;letter-spacing:0">${t('plan.decon')}</text>`;
-  h += `<text class="p-val" id="opn" x="27" y="296"></text>`;
-  /* hospital */
-  h += `<rect class="p-area" x="20" y="360" width="106" height="92" rx="6"/><text class="p-az" x="27" y="374">${t('plan.hospital')}</text>`;
-  h += `<text class="p-val" id="hos" x="27" y="396"></text><text class="p-sm" id="hosd" x="27" y="410"></text>`;
-  /* cinta + scan 1 */
-  const ST = w.sorting.type, nS1 = ST === 'sorter' ? w.sorting.sorter.inductionPoints : w.capacity.stations.sort, sGap = Math.min(22, 470 / Math.max(1, nS1));
-  let rolls = '';
-  for (let x = 134; x < 640; x += 12) rolls += `<line class="p-roll" x1="${x}" y1="263" x2="${x}" y2="275"/>`;
-  h += `<rect class="p-belt" x="126" y="262" width="514" height="14" rx="3"/>${rolls}<text class="p-sm" x="540" y="258">${t('plan.sortLine')}</text>`;
-  for (let i = 0; i < nS1; i++) h += `<rect class="p-st" x="${140 + i * sGap}" y="244" width="${Math.min(16, sGap - 3)}" height="15" rx="2"/>`;
-  const s1x = Math.min(470, 144 + nS1 * sGap);
-  const s1label = ST === 'sorter' ? t('plan.sorter', { b: w.sorting.sorter.chutes }) : ST === 'ptl' ? t('plan.ptl') : t('plan.scan1');
-  h += `<text class="p-az" x="${s1x}" y="255">${s1label}</text><text class="p-sm" id="sq" x="${s1x + s1label.length * 6.4 + 8}" y="255"></text>`;
-  /* zonas de grupos */
-  zones.forEach(z => {
-    const g = gs[z.gi];
-    h += `<g><rect class="p-zone ${g.reverify ? 'rc' : ''}" x="${z.zx}" y="${z.y0}" width="${z.zw}" height="${z.y1 - z.y0}" rx="7"/><title>${esc(g.name)}</title>`;
-    h += `<text class="p-zt" x="${z.zx + 7}" y="${z.y0 + 15}">${esc(trunc(g.name, Math.floor((z.zw - 12) / 6.1)))}</text>`;
-    g.services.forEach((s, j) => {
-      const b = G.bk[z.gi + '-' + j], id = z.gi + '-' + j;
-      h += `<g><title>${esc(s.name)}</title><rect id="bkr${id}" class="p-bk" x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="4"/>`;
-      h += `<rect id="bkf${id}" class="p-bkf ${g.reverify ? 'rc' : ''}" x="${b.x + 1.5}" y="${b.y + b.h - 1.5}" width="${b.w - 3}" height="0" rx="2.5"/>`;
-      h += `<text class="p-bkn" x="${b.x + b.w / 2}" y="${b.y + 12}">${esc(trunc(s.name, Math.max(3, Math.floor(b.w / 5.2))))}</text><text class="p-bkc" id="bkc${id}" x="${b.x + b.w / 2}" y="${b.y + b.h - 6}"></text></g>`;
-    });
-    h += `</g>`;
-  });
-  if (!so.length) h += `<text class="p-sm" x="390" y="130" text-anchor="middle">${t('plan.noStage')}</text>`;
-  if (!br.length) h += `<text class="p-sm" x="390" y="400" text-anchor="middle">${t('plan.noBranch')}</text>`;
-  /* scan 2 */
-  const nS2 = w.capacity.stations.reverify, s2h = Math.min(26, (150 - 4 * (nS2 - 1)) / nS2);
-  h += `<text class="p-az" x="648" y="42" style="font-size:9px">${t('plan.scan2')}</text><text class="p-sm" x="648" y="52" style="font-size:8px">${t('plan.reverif')}</text>`;
-  for (let i = 0; i < nS2; i++) h += `<rect class="p-st2" x="652" y="${58 + i * (s2h + 4)}" width="44" height="${s2h}" rx="3"/>`;
-  h += `<text class="p-sm" id="rvq" x="648" y="${68 + nS2 * (s2h + 4)}"></text>`;
-  /* stage out + camiones */
-  h += `<rect class="p-area" x="712" y="22" width="292" height="216" rx="7"/><text class="p-az" x="720" y="37">${t('plan.stageout')}</text><text class="p-sm" x="800" y="37">${t('plan.stageoutSub')}</text>`;
-  const n = Math.max(1, so.length), laneTop = 46, laneH = (232 - laneTop - 4 * (n - 1)) / n, K = w.capacity.stageOutSlots;
-  const sw = Math.min(22, (196 - 3 * (K - 1)) / K), shh = Math.min(laneH - 14, 22);
-  so.forEach((gi, k) => {
-    const ly = laneTop + k * (laneH + 4), g = gs[gi];
-    G.lane[gi] = { cy: ly + laneH / 2 };
-    h += `<rect x="716" y="${ly}" width="284" height="${laneH}" rx="4" fill="var(--surface-2)" stroke="var(--line-2)"/>`;
-    h += `<text class="p-md" x="722" y="${ly + laneH / 2 - 1}">${esc(trunc(g.name.replace(/ Branch$/, ''), 12))}</text><text class="p-sm" id="lnp${gi}" x="722" y="${ly + laneH / 2 + 10}"></text>`;
-    for (let i = 0; i < K; i++) h += `<rect id="sl${gi}_${i}" class="p-slot${g.reverify ? '' : ' dir'}" x="${800 + i * (sw + 3)}" y="${ly + (laneH - shh) / 2}" width="${sw}" height="${shh}" rx="3"/>`;
-    h += `<text class="p-ovf" id="lno${gi}" x="${800 + K * (sw + 3) + 2}" y="${ly + laneH / 2 + 3}"></text>`;
-    h += `<rect class="p-door" x="1006" y="${ly + 3}" width="9" height="${laneH - 6}"/>`;
-    const th = Math.min(laneH - 4, 40), ty = ly + (laneH - th) / 2;
-    h += `<g id="tk${gi}" class="tk"><rect class="b" x="1022" y="${ty}" width="118" height="${th}" rx="4"/><rect x="1142" y="${ty + th * 0.15}" width="24" height="${th * 0.7}" rx="4" fill="var(--text-2)" opacity=".7"/>`;
-    h += `<text class="p-md" x="1030" y="${ty + th / 2 - (th > 28 ? 2 : -3)}">${esc(trunc(g.name.replace(/ Branch$/, ''), 14))}</text>`;
-    h += (th > 28 ? `<text class="p-sm" id="tks${gi}" x="1030" y="${ty + th / 2 + 10}"></text>` : '') + `</g>`;
-  });
-  h += `<text class="p-az" x="1022" y="18" style="font-size:9px">${t('plan.dock')}</text><text class="p-az" x="716" y="254" style="font-size:9px">${t('plan.load')}</text>`;
-  /* branch */
-  const nB = w.capacity.stations.branch, bh2 = Math.min(26, (150 - 4 * (nB - 1)) / nB);
-  h += `<text class="p-az" x="648" y="312" style="font-size:9px">${t('plan.routeSort')}</text><text class="p-sm" x="648" y="322" style="font-size:8px">${t('plan.routeSortSub')}</text>`;
-  for (let i = 0; i < nB; i++) h += `<rect class="p-st" x="652" y="${328 + i * (bh2 + 4)}" width="44" height="${bh2}" rx="3"/>`;
-  h += `<text class="p-sm" id="brq" x="648" y="${338 + nB * (bh2 + 4)}"></text>`;
-  const R = w.routes.count;
-  h += `<rect class="p-area" x="712" y="290" width="292" height="214" rx="7"/><text class="p-az" x="720" y="305">${t('plan.branch')}</text><text class="p-sm" x="836" y="305">${t('plan.branchSub')}</text>`;
-  const rRows = R <= 5 ? 1 : R <= 12 ? 2 : R <= 24 ? 3 : 4, rCols = Math.ceil(R / rRows);
-  const rw = Math.min(80, (276 - 6 * (rCols - 1)) / rCols), rh = Math.min(70, (190 - 6 * (rRows - 1)) / rRows);
-  for (let r = 0; r < R; r++) {
-    const x = 720 + (r % rCols) * (rw + 6), y = 312 + Math.floor(r / rCols) * (rh + 6);
-    G.route[r] = { x, y, w: rw, h: rh };
-    const times = w.routes.windows.map(v => fmtHM((hm(v.first) ?? 0) + r * v.everyMin)), tm = times[0] ?? '';
-    h += `<g id="rt${r}" class="rt"><title>R${r + 1} · ${times.join(' · ')}</title><rect class="b" x="${x}" y="${y}" width="${rw}" height="${rh}" rx="5"/><rect class="f" id="rtf${r}" x="${x + 1.5}" y="${y + rh - 1.5}" width="${rw - 3}" height="0" rx="3"/>`;
-    h += `<text class="p-md" x="${x + 4}" y="${y + 11}" style="font-size:9px">R${r + 1}</text>${rw > 40 ? `<text class="p-sm" x="${x + rw - 3}" y="${y + 11}" text-anchor="end" style="font-size:7.5px">${tm}</text>` : ''}`;
-    h += `<text class="p-bkc" id="rtc${r}" x="${x + rw / 2}" y="${y + rh / 2 + 5}"></text></g>`;
-  }
-  h += `<rect class="p-door" x="1006" y="380" width="9" height="60"/><text class="p-az" x="1022" y="404" style="font-size:9px">${t('plan.exit')}</text>`;
-  /* operarios: con multiskill cualquiera puede estar en cualquier proceso */
-  // shortcut: se dibujan como mucho `max` puntos por zona; alcanza para bodegas de hasta ~40 personas por turno
+/** Pared más cercana a una zona: ahí afuera se dibuja el camión. */
+export function side(z: Zone, L: Layout): 'l' | 'r' | 't' | 'b' {
+  const d = { l: z.x, r: L.widthM - (z.x + z.w), t: z.y, b: L.heightM - (z.y + z.h) };
+  return (['r', 'l', 't', 'b'] as const).reduce((a, b) => (d[b] < d[a] ? b : a));
+}
+
+/** viewBox (unidades de dibujo) con lugar afuera para los camiones de salida. */
+export function planBox(L: Layout): Box {
+  const m = { l: 1, r: 1, t: 1.5, b: 1 };
+  L.zones.filter(z => z.kind === 'outDoor').forEach(z => { m[side(z, L)] = 8; });
+  // también entran las zonas que quedaron fuera de las paredes
+  const x0 = Math.min(0, ...L.zones.map(z => z.x)), y0 = Math.min(0, ...L.zones.map(z => z.y));
+  const x1 = Math.max(L.widthM, ...L.zones.map(z => z.x + z.w)), y1 = Math.max(L.heightM, ...L.zones.map(z => z.y + z.h));
+  return { x: (x0 - m.l) * K, y: (y0 - m.t) * K, w: (x1 - x0 + m.l + m.r) * K, h: (y1 - y0 + m.t + m.b) * K };
+}
+
+/** Fondo: imagen o trazos del CAD, escalados a metros. */
+export function backgroundSvg(bg: PlanBackground | null | undefined): string {
+  if (!bg) return '';
+  const k = bg.scale * K;
+  return bg.kind === 'image'
+    ? `<image href="${esc(bg.data)}" x="0" y="0" width="${bg.w * k}" height="${bg.h * k}" preserveAspectRatio="none" class="p-bgimg"/>`
+    : `<path class="p-cad" d="${esc(bg.data)}" transform="scale(${k})"/>`;
+}
+
+export function buildPlan(svg: SVGSVGElement, w: Warehouse, bg: PlanBackground | null): Geo {
+  const L = viewLayout(w), gs = w.groups, so: number[] = [], br: number[] = [];
+  gs.forEach((g, i) => (g.dest === 'branch' ? br : so).push(i));
+  const G: Geo = { so, br, bk: {}, lane: {}, door: {}, route: [], dots: {} as Record<ProcessKey, number>, sortC: [0, 0], rvC: [0, 0], brC: [0, 0] };
+  const vb = planBox(L);
+  svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+  const Z = (kind: ZoneKind, ref = ''): Zone | undefined => L.zones.find(z => z.kind === kind && z.ref === ref);
+  // se dibuja 1 unidad hacia adentro para que dos zonas que se tocan se vean separadas
+  const R = (z: Zone): Box => ({ x: z.x * K + 1, y: z.y * K + 1, w: Math.max(6, z.w * K - 2), h: Math.max(6, z.h * K - 2) });
+  const W = L.widthM * K, H = L.heightM * K;
   const people = Math.max(0, ...w.shifts.map(s => PROCESSES.reduce((a, p) => a + (s.staff[p] || 0), 0)));
-  const dots = (k: ProcessKey, x: number, y: number, per: number, gap: number, max = per * 2) => {
+  // shortcut: se dibujan como mucho `max` puntos por zona; alcanza para bodegas de hasta ~40 personas por turno
+  const dots = (k: ProcessKey, x: number, y: number, per: number, gap: number, max = per * 2): string => {
     const n2 = Math.min(people, max);
     G.dots[k] = n2;
     let s = '';
     for (let i = 0; i < n2; i++) s += `<circle id="w${k}${i}" class="w-dot" cx="${x + (i % per) * gap}" cy="${y + Math.floor(i / per) * gap}" r="4"><title>${t('p.' + k)}</title></circle>`;
     return s;
   };
-  h += dots('unload', 96, 148, 3, 10) + dots('decon', 96, 330, 3, 10) + dots('sort', 146, 288, 42, 11, 42) + dots('reverify', 656, 58 + nS2 * (s2h + 4) + 20, 4, 10)
-    + dots('branch', 656, 338 + nB * (bh2 + 4) + 10, 4, 10) + dots('load', 760, 250, 8, 10, 8) + dots('hospital', 96, 372, 3, 10);
+  const area = (r: Box, title: string, sub = ''): string => `<rect class="p-area" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="6"/><text class="p-az" x="${r.x + 7}" y="${r.y + 14}">${title}</text>${sub ? `<text class="p-sm" x="${r.x + 7}" y="${r.y + 25}">${sub}</text>` : ''}`;
+
+  let h = `<defs><pattern id="pgrid" width="${K}" height="${K}" patternUnits="userSpaceOnUse"><path d="M${K} 0H0V${K}" fill="none" stroke="var(--grid)" stroke-width="1"/></pattern></defs>`;
+  h += backgroundSvg(bg);
+  h += `<rect class="p-floor${bg ? ' bg' : ''}" x="0" y="0" width="${W}" height="${H}"/><rect class="p-wall" x="0" y="0" width="${W}" height="${H}" rx="4"/>`;
+
+  /* entrada, desconsolidación y hospital */
+  const zi = Z('inbound');
+  if (zi) {
+    const r = R(zi);
+    h += area(r, t('plan.inbound'), t('plan.unloading')) + `<text class="p-sm" id="ind" x="${r.x + 7}" y="${r.y + 37}"></text>`;
+    const cols = Math.max(1, Math.floor((r.w - 14) / 11.5)), rows = Math.max(0, Math.floor((r.h - 81) / 11));
+    for (let i = 0; i < Math.min(24, cols * rows); i++) h += `<rect id="ibx${i}" class="p-box" x="${r.x + 7 + (i % cols) * 11.5}" y="${r.y + 43 + Math.floor(i / cols) * 11}" width="9" height="9" rx="1.2" style="display:none"/>`;
+    h += `<text class="p-md" id="stB" x="${r.x + 7}" y="${r.y + r.h - 32}"></text><text class="p-md" id="stU" x="${r.x + 7}" y="${r.y + r.h - 20}"></text><text class="p-md" id="stL" x="${r.x + 7}" y="${r.y + r.h - 8}"></text>`;
+    h += dots('unload', r.x + r.w - 30, r.y + 12, 3, 10);
+  }
+  const zd = Z('decon');
+  if (zd) { const r = R(zd); h += area(r, `<tspan style="font-size:7.6px;letter-spacing:0">${t('plan.decon')}</tspan>`) + `<text class="p-val" id="opn" x="${r.x + 7}" y="${r.y + 36}"></text>` + dots('decon', r.x + r.w - 30, r.y + r.h - 22, 3, 10); }
+  const zh = Z('hospital');
+  if (zh) { const r = R(zh); h += area(r, t('plan.hospital')) + `<text class="p-val" id="hos" x="${r.x + 7}" y="${r.y + 36}"></text><text class="p-sm" id="hosd" x="${r.x + 7}" y="${r.y + 50}"></text>` + dots('hospital', r.x + r.w - 30, r.y + 12, 3, 10); }
+
+  /* sorting de entrada: la cinta existe solo con sorter (manual y Pick to Light se hacen a pie) */
+  const zs = Z('sort');
+  if (zs) {
+    const r = R(zs), ST = w.sorting.type, n = ST === 'sorter' ? w.sorting.sorter.inductionPoints : w.capacity.stations.sort;
+    G.sortC = [r.x + r.w / 2, r.y + r.h / 2];
+    if (ST === 'sorter') {
+      const by = r.y + r.h - 18;
+      let rolls = '';
+      for (let x = r.x + 8; x < r.x + r.w - 4; x += 12) rolls += `<line class="p-roll" x1="${x}" y1="${by + 1}" x2="${x}" y2="${by + 13}"/>`;
+      h += `<rect class="p-belt" x="${r.x}" y="${by}" width="${r.w}" height="14" rx="3"/>${rolls}`;
+      G.sortC = [r.x + 10, by + 7];
+    } else h += `<rect class="p-area" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="6"/>`;
+    const gap = Math.max(4, Math.min(22, (r.w - 20) / Math.max(1, n)));
+    for (let i = 0; i < n; i++) h += `<rect class="p-st" x="${r.x + 8 + i * gap}" y="${r.y + 5}" width="${Math.min(16, gap - 3)}" height="15" rx="2"/>`;
+    const label = ST === 'sorter' ? t('plan.sorter', { b: w.sorting.sorter.chutes }) : ST === 'ptl' ? t('plan.ptl') : t('plan.scan1');
+    h += `<text class="p-az" x="${r.x + 8}" y="${r.y + 33}">${label}</text><text class="p-sm" id="sq" x="${r.x + 16 + label.length * 6.4}" y="${r.y + 33}"></text>`;
+    if (r.h > 44) h += dots('sort', r.x + 12, r.y + 45, Math.max(1, Math.floor((r.w - 24) / 11)), 11, 42);
+  }
+
+  /* zonas de canastos de cada grupo */
+  gs.forEach((g, gi) => {
+    const z = Z('group', g.id);
+    if (!z) return;
+    const r = R(z), m = g.services.length;
+    const cols = Math.max(1, Math.min(m, Math.floor((r.w - 8) / 46))), rows = Math.max(1, Math.ceil(m / cols));
+    const bw = Math.max(8, Math.min(74, (r.w - 10 - 6 * (cols - 1)) / cols)), bh = Math.max(8, Math.min(58, (r.h - 32 - 6 * (rows - 1)) / rows));
+    h += `<g><rect class="p-zone ${g.reverify ? 'rc' : ''}" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="7"/><title>${esc(g.name)}</title>`;
+    h += `<text class="p-zt" x="${r.x + 7}" y="${r.y + 15}">${esc(trunc(g.name, Math.floor((r.w - 12) / 6.1)))}</text>`;
+    g.services.forEach((sv, j) => {
+      const b = { x: r.x + 5 + (j % cols) * (bw + 6), y: r.y + 26 + Math.floor(j / cols) * (bh + 6), w: bw, h: bh }, id = gi + '-' + j;
+      G.bk[id] = b;
+      h += `<g><title>${esc(sv.name)}</title><rect id="bkr${id}" class="p-bk" x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="4"/>`;
+      h += `<rect id="bkf${id}" class="p-bkf ${g.reverify ? 'rc' : ''}" x="${b.x + 1.5}" y="${b.y + b.h - 1.5}" width="${b.w - 3}" height="0" rx="2.5"/>`;
+      h += `<text class="p-bkn" x="${b.x + b.w / 2}" y="${b.y + 12}">${esc(trunc(sv.name, Math.max(3, Math.floor(b.w / 5.2))))}</text><text class="p-bkc" id="bkc${id}" x="${b.x + b.w / 2}" y="${b.y + b.h - 6}"></text></g>`;
+    });
+    h += `</g>`;
+  });
+
+  /* reverificación (Scan 2) */
+  const zr = Z('reverify');
+  if (zr) {
+    const r = R(zr), n = w.capacity.stations.reverify, vert = r.h >= r.w;
+    G.rvC = [r.x + r.w / 2, r.y + r.h / 2];
+    h += `<rect class="p-area" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="6"/><text class="p-az" x="${r.x + 5}" y="${r.y + 12}" style="font-size:9px">${t('plan.scan2')}</text><text class="p-sm" x="${r.x + 5}" y="${r.y + 22}" style="font-size:8px">${t('plan.reverif')}</text>`;
+    const len = vert ? Math.max(4, Math.min(26, (r.h - 70 - 4 * (n - 1)) / n)) : Math.max(4, Math.min(44, (r.w - 12 - 4 * (n - 1)) / n));
+    for (let i = 0; i < n; i++) h += vert ? `<rect class="p-st2" x="${r.x + 6}" y="${r.y + 28 + i * (len + 4)}" width="${Math.min(44, r.w - 12)}" height="${len}" rx="3"/>` : `<rect class="p-st2" x="${r.x + 6 + i * (len + 4)}" y="${r.y + 28}" width="${len}" height="${Math.min(26, r.h - 34)}" rx="3"/>`;
+    const qy = vert ? r.y + 38 + n * (len + 4) : r.y + r.h - 6;
+    h += `<text class="p-sm" id="rvq" x="${r.x + 5}" y="${qy}"></text>` + (vert ? dots('reverify', r.x + 10, qy + 14, Math.max(1, Math.floor((r.w - 14) / 10)), 10) : '');
+  }
+
+  /* Stage out: un carril por grupo, con su puerta y su camión afuera */
+  const K2 = w.capacity.stageOutSlots, lanes = so.map(gi => Z('stage', gs[gi].id)).filter((z): z is Zone => !!z);
+  if (lanes.length) {
+    const ux = Math.min(...lanes.map(z => z.x)) * K, uy = Math.min(...lanes.map(z => z.y)) * K, uy1 = Math.max(...lanes.map(z => z.y + z.h)) * K;
+    h += `<text class="p-az" x="${ux + 2}" y="${uy - 6}">${t('plan.stageout')}</text><text class="p-sm" x="${ux + 82}" y="${uy - 6}">${t('plan.stageoutSub')}</text>`;
+    h += dots('load', ux + 48, uy1 + 14, 8, 10, 8) + `<text class="p-az" x="${ux + 2}" y="${uy1 + 18}" style="font-size:9px">${t('plan.load')}</text>`;
+  }
+  let dockLabel = false;
+  so.forEach(gi => {
+    const g = gs[gi], zl = Z('stage', g.id), zo = Z('outDoor', g.id);
+    if (zl) {
+      const r = R(zl), cy = r.y + r.h / 2;
+      G.lane[gi] = { cx: r.x + Math.min(r.w, 90), cy };
+      h += `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="4" fill="var(--surface-2)" stroke="var(--line-2)"/>`;
+      h += `<text class="p-md" x="${r.x + 6}" y="${cy - 1}">${esc(trunc(g.name.replace(/ Branch$/, ''), 12))}</text><text class="p-sm" id="lnp${gi}" x="${r.x + 6}" y="${cy + 10}"></text>`;
+      const sw = Math.max(3, Math.min(22, (r.w - 96 - 3 * (K2 - 1)) / K2)), shh = Math.max(3, Math.min(r.h - 14, 22));
+      for (let i = 0; i < K2; i++) h += `<rect id="sl${gi}_${i}" class="p-slot${g.reverify ? '' : ' dir'}" x="${r.x + 84 + i * (sw + 3)}" y="${r.y + (r.h - shh) / 2}" width="${sw}" height="${shh}" rx="3"/>`;
+      h += `<text class="p-ovf" id="lno${gi}" x="${r.x + 86 + K2 * (sw + 3)}" y="${cy + 3}"></text>`;
+    }
+    if (zo) {
+      const r = R(zo), cx = r.x + r.w / 2, cy = r.y + r.h / 2, sd = side(zo, L);
+      G.door[gi] = { cx, cy };
+      h += `<rect class="p-dock" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="1"/>`;
+      const tw = 118, th = Math.max(14, Math.min(40, (sd === 'l' || sd === 'r' ? r.h : r.w) - 2));
+      const tx = sd === 'r' ? W + 12 : sd === 'l' ? -12 - tw : cx - tw / 2, ty = sd === 't' ? -12 - th : sd === 'b' ? H + 12 : cy - th / 2;
+      const cab = sd === 'r' ? `<rect x="${tx + tw + 2}" y="${ty + th * 0.15}" width="24" height="${th * 0.7}" rx="4" fill="var(--text-2)" opacity=".7"/>` : sd === 'l' ? `<rect x="${tx - 26}" y="${ty + th * 0.15}" width="24" height="${th * 0.7}" rx="4" fill="var(--text-2)" opacity=".7"/>` : '';
+      h += `<g id="tk${gi}" class="tk"><rect class="b" x="${tx}" y="${ty}" width="${tw}" height="${th}" rx="4"/>${cab}`;
+      h += `<text class="p-md" x="${tx + 8}" y="${ty + th / 2 - (th > 28 ? 2 : -3)}">${esc(trunc(g.name.replace(/ Branch$/, ''), 14))}</text>`;
+      h += (th > 28 ? `<text class="p-sm" id="tks${gi}" x="${tx + 8}" y="${ty + th / 2 + 10}"></text>` : '') + `</g>`;
+      if (!dockLabel) { h += `<text class="p-az" x="${tx}" y="${ty - 6}" style="font-size:9px">${t('plan.dock')}</text>`; dockLabel = true; }
+    }
+  });
+
+  /* Branch: sorting de rutas y lugar de cada ruta hasta que pasa el cartero */
+  const zb = Z('branch');
+  if (zb) {
+    const r = R(zb), nB = w.capacity.stations.branch, bh2 = Math.max(4, Math.min(26, (r.h - 80 - 4 * (nB - 1)) / nB)), R2 = w.routes.count;
+    G.brC = [r.x + 28, r.y + 34];
+    h += `<rect class="p-area" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="7"/><text class="p-az" x="${r.x + 8}" y="${r.y + 15}">${t('plan.branch')}</text><text class="p-sm" x="${r.x + 124}" y="${r.y + 15}">${t('plan.branchSub')}</text>`;
+    h += `<text class="p-sm" x="${r.x + 6}" y="${r.y + 30}" style="font-size:8px">${t('plan.routeSort')}</text>`;
+    for (let i = 0; i < nB; i++) h += `<rect class="p-st" x="${r.x + 6}" y="${r.y + 36 + i * (bh2 + 4)}" width="44" height="${bh2}" rx="3"/>`;
+    const qy = r.y + 46 + nB * (bh2 + 4);
+    h += `<text class="p-sm" id="brq" x="${r.x + 6}" y="${qy}"></text>` + dots('branch', r.x + 10, qy + 12, 4, 10);
+    const x0 = r.x + 60, y0 = r.y + 24, aw = r.w - 66, ah = r.h - 30;
+    const rRows = R2 <= 5 ? 1 : R2 <= 12 ? 2 : R2 <= 24 ? 3 : 4, rCols = Math.ceil(R2 / rRows);
+    const rw = Math.max(8, Math.min(80, (aw - 6 * (rCols - 1)) / rCols)), rh = Math.max(8, Math.min(70, (ah - 6 * (rRows - 1)) / rRows));
+    for (let i = 0; i < R2; i++) {
+      const x = x0 + (i % rCols) * (rw + 6), y = y0 + Math.floor(i / rCols) * (rh + 6);
+      G.route[i] = { x, y, w: rw, h: rh };
+      const times = w.routes.windows.map(v => fmtHM((hm(v.first) ?? 0) + i * v.everyMin)), tm = times[0] ?? '';
+      h += `<g id="rt${i}" class="rt"><title>R${i + 1} · ${times.join(' · ')}</title><rect class="b" x="${x}" y="${y}" width="${rw}" height="${rh}" rx="5"/><rect class="f" id="rtf${i}" x="${x + 1.5}" y="${y + rh - 1.5}" width="${rw - 3}" height="0" rx="3"/>`;
+      h += `<text class="p-md" x="${x + 4}" y="${y + 11}" style="font-size:9px">R${i + 1}</text>${rw > 40 ? `<text class="p-sm" x="${x + rw - 3}" y="${y + 11}" text-anchor="end" style="font-size:7.5px">${tm}</text>` : ''}`;
+      h += `<text class="p-bkc" id="rtc${i}" x="${x + rw / 2}" y="${y + rh / 2 + 5}"></text></g>`;
+    }
+  }
+  const ze = Z('exit');
+  if (ze) {
+    const r = R(ze), sd = side(ze, L);
+    h += `<rect class="p-dock" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="1"/>`;
+    h += sd === 'r' ? `<text class="p-az" x="${W + 8}" y="${r.y + r.h / 2 + 3}" style="font-size:9px">${t('plan.exit')}</text>` : `<text class="p-az" x="${r.x}" y="${sd === 't' ? r.y - 4 : r.y + r.h + 12}" style="font-size:9px">${t('plan.exit')}</text>`;
+  }
+  if (!so.length) h += `<text class="p-sm" x="${W / 2}" y="${K * 6}" text-anchor="middle">${t('plan.noStage')}</text>`;
+  if (!br.length) h += `<text class="p-sm" x="${W / 2}" y="${H - K * 5}" text-anchor="middle">${t('plan.noBranch')}</text>`;
   h += `<g id="fx"></g>`;
   svg.innerHTML = h;
   return G;
@@ -282,10 +357,11 @@ export class FxLayer {
   }
   handler: Fx = (kind, a, b) => {
     const G = this.G;
-    if (kind === 'sort') { const k = G.bk[a as string]; if (k) { const x = k.x + k.w / 2; this.spawn([[126, 269], [x, 269], [x, k.y + k.h / 2]], 'pk', 7, 6); } }
-    else if (kind === 'stage') { const L = G.lane[a as number]; if (!L) return; const k = b ? G.bk[b] : null; const from: [number, number] = k ? [k.x + k.w / 2, k.y + k.h / 2] : [674, 150]; this.spawn([from, [704, from[1]], [704, L.cy], [790, L.cy]], 'ct', 12, 9); }
-    else if (kind === 'load') { const L = G.lane[a as number]; if (L) this.spawn([[960, L.cy], [1060, L.cy]], 'ct', 12, 9); }
-    else if (kind === 'route') { const R = G.route[a as number]; if (R) this.spawn([[700, 380], [R.x + R.w / 2, 380], [R.x + R.w / 2, R.y + R.h / 2]], 'br', 7, 6); }
+    const via = (p: [number, number], q: [number, number]): [number, number][] => [p, [q[0], p[1]], q]; // en ángulo recto
+    if (kind === 'sort') { const k = G.bk[a as string]; if (k) this.spawn(via(G.sortC, [k.x + k.w / 2, k.y + k.h / 2]), 'pk', 7, 6); }
+    else if (kind === 'stage') { const L = G.lane[a as number]; if (!L) return; const k = b ? G.bk[b] : null; this.spawn(via(k ? [k.x + k.w / 2, k.y + k.h / 2] : G.rvC, [L.cx, L.cy]), 'ct', 12, 9); }
+    else if (kind === 'load') { const L = G.lane[a as number], D = G.door[a as number]; if (L && D) this.spawn(via([L.cx, L.cy], [D.cx, D.cy]), 'ct', 12, 9); }
+    else if (kind === 'route') { const R = G.route[a as number]; if (R) this.spawn(via(G.brC, [R.x + R.w / 2, R.y + R.h / 2]), 'br', 7, 6); }
   };
 }
 

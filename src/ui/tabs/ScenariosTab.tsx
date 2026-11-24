@@ -13,6 +13,7 @@ export function fmtKpi(k: KpiKey, v: number, signed = false): string {
   if (k === 'costPerPkg') return sg + nf(v, 3);
   if (k.startsWith('time')) return sg + nf(v / 60, 1) + ' h';
   if (k === 'busyH' || k === 'otH') return sg + nf(v, 1) + ' h';
+  if (k === 'travelKm') return sg + nf(v, 1) + ' km';
   return sg + nf(v);
 }
 

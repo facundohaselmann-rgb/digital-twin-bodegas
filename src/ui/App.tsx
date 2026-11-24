@@ -171,7 +171,7 @@ export function App() {
       <main>
         {error && <div class="warns"><div class="warn">⚠ {t('run.error', { msg: error })}</div></div>}
         {run && run.warnings.length > 0 && <div class="warns">{run.warnings.map(x => <div class="warn">⚠ {warnText(x)}</div>)}</div>}
-        {run && tab === 'plan' && <PlanTab key={lang} w={run.w} r={run.r} />}
+        {run && tab === 'plan' && <PlanTab key={lang} w={run.w} r={run.r} plan={project.plan ?? null} onProject={updateProject} say={say} />}
         {run && tab === 'results' && <ResultsTab w={run.w} r={run.r} rep={rep} cmp={cmp} />}
         {tab === 'scenarios' && <ScenariosTab project={project} cmp={cmp} progress={cmpProgress} stale={!!cmp && cmp.at !== project.updatedAt} onCompare={compare}
           onActivate={id => updateProject(p => { p.activeScenario = id; })}

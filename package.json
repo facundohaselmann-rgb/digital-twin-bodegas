@@ -12,6 +12,7 @@
     "e2e": "node e2e/smoke.mjs"
   },
   "dependencies": {
+    "pdfjs-dist": "6.4.299",
     "preact": "10.25.4"
   },
   "devDependencies": {
