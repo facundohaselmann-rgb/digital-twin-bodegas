@@ -276,6 +276,11 @@ export function buildPlan(svg: SVGSVGElement, w: Warehouse, bg: PlanBackground |
   }
   if (!so.length) h += `<text class="p-sm" x="${W / 2}" y="${K * 6}" text-anchor="middle">${t('plan.noStage')}</text>`;
   if (!br.length) h += `<text class="p-sm" x="${W / 2}" y="${H - K * 5}" text-anchor="middle">${t('plan.noBranch')}</text>`;
+  // zonas de clic encima de todo: al tocarlas se abre su panel de parámetros
+  L.zones.forEach(z => {
+    const r = R(z), g = gs.find(x => x.id === z.ref);
+    h += `<rect class="zhit" data-zone="${z.kind}:${esc(z.ref)}" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="6"><title>${esc(t('z.' + z.kind) + (g ? ' · ' + g.name : ''))}</title></rect>`;
+  });
   h += `<g id="fx"></g>`;
   svg.innerHTML = h;
   return G;

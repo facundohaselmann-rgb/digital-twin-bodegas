@@ -19,7 +19,7 @@ const CptCells = ({ c }: { c: CptStat }) => (
   <><td class="n">{nf(c.n)}</td><td class="n"><b>{pct(c.pct)}</b></td><td class={'n ' + (c.late ? 'ko' : '')}>{nf(c.late)}</td><td class="n">{c.noCpt ? nf(c.noCpt) : '—'}</td><td class="n">{fmtDur(c.delayMean)}</td><td class="n">{fmtDur(c.delayP90)}</td></>
 );
 
-export function ResultsTab({ w, r, rep, cmp }: { w: Warehouse; r: SimResult; rep: { s: KpiSummaries | null; progress: number | null }; cmp: Comparison | null }) {
+export function ResultsTab({ w, r, rep, cmp, onReport }: { w: Warehouse; r: SimResult; rep: { s: KpiSummaries | null; progress: number | null }; cmp: Comparison | null; onReport: () => void }) {
   const cost = computeCost(r, w);
   const usd = (v: number) => nf(v, 0);
   const T = r.time;
@@ -32,7 +32,7 @@ export function ResultsTab({ w, r, rep, cmp }: { w: Warehouse; r: SimResult; rep
     <div>
       <div class="cfgbar">
         <button class="btn" onClick={() => exportCSV(w, r)}>{t('res.export')}</button>
-        <button class="btn" onClick={() => window.print()}>{t('res.pdf')}</button>
+        <button class="btn" onClick={onReport}>{t('res.pdf')}</button>
         <span class="note">{t('res.note', { seed: r.seed, pkgs: nf(r.totals.pkgs), kg: nf(r.totals.kg), m3: nf(r.totals.m3, 1) })}</span>
       </div>
       <h1 class="print-only">{w.name} — {t('tab.results')}</h1>
@@ -159,25 +159,22 @@ export function ResultsTab({ w, r, rep, cmp }: { w: Warehouse; r: SimResult; rep
             <thead><tr><th>{t('res.truck')}</th><th>{t('res.arrival')}</th><th class="n">{t('res.pkgs')}</th><th class="n">{t('plan.boxes')}</th><th class="n">{t('plan.ulds')}</th><th class="n">{t('plan.loose')}</th><th>{t('res.unloadEnd')}</th><th>{t('res.sortEnd')}</th></tr></thead>
             <tbody>{r.inbound.map(i => <tr><td>{i.name}</td><td>{dt(i.arrival)}</td><td class="n">{nf(i.pkgs)}</td><td class="n">{i.boxes}</td><td class="n">{i.ulds}</td><td class="n">{nf(i.loose)}</td><td>{dt(i.unloadEnd)}</td><td>{dt(i.sortEnd)}</td></tr>)}</tbody>
           </table></div></div>
-        <div class="card"><h2>{t('res.outbound')}</h2><div class="sub">{t('res.outboundSub')}</div>
-          <div class="tblwrap"><table>
-            <thead><tr><th>{t('res.group')}</th><th>{t('res.arrival')}</th><th>{t('res.departure')}</th><th class="n">{t('res.units')}</th><th class="n">{t('res.pkgs')}</th><th class="n">{t('res.m3')}</th><th class="n">{t('res.kg')}</th><th class="n">{t('res.left')}</th><th class="n">{t('res.late')}</th></tr></thead>
-            <tbody>{r.outbound.map(o => <tr><td>{o.group}</td><td>{dt(o.arrival)}</td><td>{dt(o.departure)}</td><td class="n">{o.units}</td><td class="n">{nf(o.pkgs)}</td><td class="n">{nf(o.m3, 1)} ({pct(o.m3 / w.capacity.truckM3)})</td><td class="n">{nf(o.kg)} ({pct(o.kg / w.capacity.truckKg)})</td><td class={'n ' + (o.leftPkgs ? 'ko' : '')}>{o.leftPkgs ? nf(o.leftPkgs) : '—'}</td><td class={'n ' + (o.late > 0.5 ? 'ko' : '')}>{o.late > 0.5 ? fmtDur(o.late) : '—'}</td></tr>)}</tbody>
-          </table></div></div>
-      </div>
-
-      <div class="grid2">
-        <div class="card"><h2>{t('res.groups')}</h2>
-          <div class="tblwrap"><table>
-            <thead><tr><th>{t('res.group')}</th><th>{t('res.flow')}</th><th class="n">{t('res.pkgs')}</th><th class="n">{t('res.baskets')}</th><th class="n">{t('res.containers')}</th><th class="n">{t('res.spp')}</th><th class="n">{t('res.mean')}</th><th class="n">P90</th><th class="n">P95</th><th class="n">P98</th></tr></thead>
-            <tbody>{r.groups.map(g => <tr><td>{g.name}</td><td>{g.reverify ? t('res.reverifyFlow') : t('res.directFlow')} → {g.dest === 'branch' ? 'Branch' : 'Stage out'}</td><td class="n">{nf(g.pkgs)}</td><td class="n">{nf(g.baskets)}</td><td class="n">{g.containers || '—'}</td><td class="n">{nf(g.spp, 1)}</td><td class="n">{hours(g.time.mean)}</td><td class="n">{hours(g.time.p90)}</td><td class="n">{hours(g.time.p95)}</td><td class="n">{hours(g.time.p98)}</td></tr>)}</tbody>
-          </table></div></div>
         <div class="card"><h2>{t('res.events')}</h2>
           <div class="tblwrap"><table>
             <thead><tr><th>{t('res.event')}</th><th class="n">{t('res.count')}</th></tr></thead>
             <tbody>{Object.entries(r.events).map(([k, v]) => <tr><td>{k}</td><td class="n">{nf(v)}</td></tr>)}</tbody>
           </table></div></div>
       </div>
+      <div class="card mb"><h2>{t('res.outbound')}</h2><div class="sub">{t('res.outboundSub')}</div>
+          <div class="tblwrap"><table>
+            <thead><tr><th>{t('res.group')}</th><th>{t('res.arrival')}</th><th>{t('res.departure')}</th><th class="n">{t('res.units')}</th><th class="n">{t('res.pkgs')}</th><th class="n">{t('res.m3')}</th><th class="n">{t('res.kg')}</th><th class="n">{t('res.left')}</th><th class="n">{t('res.late')}</th></tr></thead>
+            <tbody>{r.outbound.map(o => <tr><td>{o.group}</td><td>{dt(o.arrival)}</td><td>{dt(o.departure)}</td><td class="n">{o.units}</td><td class="n">{nf(o.pkgs)}</td><td class="n">{nf(o.m3, 1)} ({pct(o.m3 / w.capacity.truckM3)})</td><td class="n">{nf(o.kg)} ({pct(o.kg / w.capacity.truckKg)})</td><td class={'n ' + (o.leftPkgs ? 'ko' : '')}>{o.leftPkgs ? nf(o.leftPkgs) : '—'}</td><td class={'n ' + (o.late > 0.5 ? 'ko' : '')}>{o.late > 0.5 ? fmtDur(o.late) : '—'}</td></tr>)}</tbody>
+          </table></div></div>
+      <div class="card"><h2>{t('res.groups')}</h2>
+          <div class="tblwrap"><table>
+            <thead><tr><th>{t('res.group')}</th><th>{t('res.flow')}</th><th class="n">{t('res.pkgs')}</th><th class="n">{t('res.baskets')}</th><th class="n">{t('res.containers')}</th><th class="n">{t('res.spp')}</th><th class="n">{t('res.mean')}</th><th class="n">P90</th><th class="n">P95</th><th class="n">P98</th></tr></thead>
+            <tbody>{r.groups.map(g => <tr><td>{g.name}</td><td>{g.reverify ? t('res.reverifyFlow') : t('res.directFlow')} → {g.dest === 'branch' ? 'Branch' : 'Stage out'}</td><td class="n">{nf(g.pkgs)}</td><td class="n">{nf(g.baskets)}</td><td class="n">{g.containers || '—'}</td><td class="n">{nf(g.spp, 1)}</td><td class="n">{hours(g.time.mean)}</td><td class="n">{hours(g.time.p90)}</td><td class="n">{hours(g.time.p95)}</td><td class="n">{hours(g.time.p98)}</td></tr>)}</tbody>
+          </table></div></div>
     </div>
   );
 }
