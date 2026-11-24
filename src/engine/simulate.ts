@@ -4,7 +4,8 @@
    turnos, salidas y retiros se generan también para la semana 2 para que
    el trabajo pendiente del sábado/domingo pueda terminarse.
    ===================================================================== */
-import { PROCESSES, type ProcessKey, type TimeKey, type Warehouse, type Warning } from '../model/types';
+import { PROCESSES, type ProcessKey, type TimeKey, type TravelMode, type Warehouse, type Warning } from '../model/types';
+import { distances } from '../model/layout';
 import { DAY, WEEK, hm } from '../model/time';
 import { Deque, EventHeap, mulberry32, percentile, triangular } from './core';
 
@@ -52,12 +53,15 @@ export interface SimResult {
   log: LogEv[];
   /** Paquetes por ruta, para escalar la animación. */
   routeTotals: number[];
+  /** Traslados de la semana (incluye caminar al cambiar de puesto). */
+  travel: { km: number; hours: number };
 }
 
 /* ------------------------------------------------------------------ */
 interface Pkg { ti: number; g: number; s: number; r: number; vol: number; kg: number; wi2: number; bi: number; nc: boolean; relabeled: boolean; bad: boolean }
 interface Unit { pk: Pkg[]; sk: string | null; m3: number; kg: number }
-interface Job { pk: number; base: () => number; machine?: () => number; start?: () => void; done: () => void; cancelled?: boolean; started?: boolean; eq?: number; free?: boolean }
+/** tr: minutos de traslado de la tarea (a productividad 100 %); m: metros recorridos. */
+interface Job { pk: number; base: () => number; tr?: number; m?: number; machine?: () => number; start?: () => void; done: () => void; cancelled?: boolean; started?: boolean; eq?: number; free?: boolean }
 /** state: 0 fuera de turno, 1 libre, 2 trabajando, 3 en pausa, 4 cambiando de puesto */
 interface Worker { shift: number; home: ProcessKey; proc: ProcessKey; state: 0 | 1 | 2 | 3 | 4; inWin: boolean; brk: boolean; ot: boolean; otStart: number; otEnd: number; prod: number; otMin: number; busyW1: number; changes: number; changeMin: number; idleSince: number }
 /** q: tareas que necesitan estación; free: tareas sin estación (p. ej. sorting manual al lado del sorter). */
@@ -84,6 +88,14 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
   const G = W.groups;
   const R = W.routes.count;
   const ST = W.sorting.type, SR = W.sorting.sorter, HOS = W.hospital, DIS = W.discrepancies, CHANGE = W.multiskill.changeMin, BUFFER = W.multiskill.bufferMin;
+  const D = distances(W), TV = W.travel;
+  type Move = { tr: number; m: number };
+  /** Viaje de ida y vuelta con carga; `share` lo reparte entre las tareas que viajan juntas. Zonas que se tocan: sin viaje. */
+  const mv = (d: number, mode: TravelMode, share = 1): Move =>
+    (d > 0 ? { tr: (TV.handleSec / 60 + (2 * d) / (TV.speeds[mode] * 60)) * share, m: 2 * d * share } : { tr: 0, m: 0 });
+  /** Sorting: ida y vuelta a pie con el paquete en la mano. */
+  const walk = (d: number): Move => ({ tr: (2 * d) / (TV.speeds.walk * 60), m: 2 * d });
+  const travel = { m: 0, min: 0 };
   const warnings: Warning[] = [];
   const log: LogEv[] = [];
   let now = 0;
@@ -139,8 +151,9 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
   const move = (w: Worker, target: ProcessKey): void => {
     setState(w, 4);
     pools[target].incoming++;
-    if (now < WEEK) { w.changes++; w.changeMin += CHANGE; }
-    at(now + CHANGE, () => {
+    const d = D.change[w.proc][target], walkMin = d / (TV.speeds.walk * 60);
+    if (now < WEEK) { w.changes++; w.changeMin += CHANGE + walkMin; travel.m += d; travel.min += walkMin; }
+    at(now + CHANGE + walkMin, () => {
       pools[target].incoming--;
       w.proc = target;
       if (!w.inWin && !w.ot) setState(w, 0);
@@ -203,12 +216,12 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
       j.started = true;
       P.jobs++;
       P.waitSum += now - (j.eq ?? now);
-      const d = Math.max(j.base() / w.prod, j.machine?.() ?? 0); // la productividad acelera a la persona, no a la máquina
+      const d = Math.max((j.base() + (j.tr ?? 0)) / w.prod, j.machine?.() ?? 0); // la productividad acelera a la persona, no a la máquina
       const startDay = Math.min(13, Math.floor(now / DAY));
       j.start?.();
       at(now + d, () => {
         if (!j.free) P.stBusy--;
-        if (startDay < 7) { P.busyW1 += d; w.busyW1 += d; }
+        if (startDay < 7) { P.busyW1 += d; w.busyW1 += d; travel.min += (j.tr ?? 0) / w.prod; travel.m += j.m ?? 0; }
         dayBusy[startDay] += d;
         dayLast[startDay] = Math.max(dayLast[startDay] ?? 0, now);
         j.done();
@@ -346,15 +359,16 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     if (!tr.total) { tr.unloadEnd = now; tr.sortEnd = now; L('inD', { ti: tr.ti }); return; }
     const unloadDone = (): void => { if (--tr.unloadLeft === 0) { tr.unloadEnd = now; L('inD', { ti: tr.ti }); } };
     const toSort = (pk: Pkg[]): void => pk.forEach(p => { if (rnd() * 100 < DIS.customsPct) { disc.customs++; finish(); resolve(p); } else submitSort(p); });
-    tr.ulds.forEach(u => submit('unload', { pk: u.length, base: () => T('unloadUld'), done: () => {
+    tr.ulds.forEach(u => submit('unload', { pk: u.length, base: () => T('unloadUld'), ...mv(D.unloadDecon, 'jack'), done: () => {
       u.forEach(p => (p.wi2 = now)); EV['WI-2'] += u.length; L('unl', { k: 'u' }); unloadDone();
-      submit('decon', { pk: u.length, base: () => T('emptyUld'), start: () => L('decS', { k: 'u' }), done: () => { L('decE', { k: 'u', n: u.length }); toSort(u); } });
+      submit('decon', { pk: u.length, base: () => T('emptyUld'), ...mv(D.deconSort, TV.modes.feed, u.length / cap.containerPkgs), start: () => L('decS', { k: 'u' }), done: () => { L('decE', { k: 'u', n: u.length }); toSort(u); } });
     } }));
-    tr.boxes.forEach(b => submit('unload', { pk: b.length, base: () => T('unloadBox'), done: () => {
+    // en cada viaje van las cajas que entran en un contenedor
+    tr.boxes.forEach(b => submit('unload', { pk: b.length, base: () => T('unloadBox'), ...mv(D.unloadDecon, TV.modes.unload, 1 / Math.max(1, Math.floor(cap.containerPkgs / b.length))), done: () => {
       b.forEach(p => (p.wi2 = now)); EV['WI-2'] += b.length; L('unl', { k: 'b' }); unloadDone();
-      submit('decon', { pk: b.length, base: () => T('openBox'), start: () => L('decS', { k: 'b' }), done: () => { L('decE', { k: 'b', n: b.length }); toSort(b); } });
+      submit('decon', { pk: b.length, base: () => T('openBox'), ...mv(D.deconSort, TV.modes.feed, b.length / cap.containerPkgs), start: () => L('decS', { k: 'b' }), done: () => { L('decE', { k: 'b', n: b.length }); toSort(b); } });
     } }));
-    tr.loose.forEach(() => submit('unload', { pk: 1, base: () => T('unloadLoose'), done: () => {
+    tr.loose.forEach(() => submit('unload', { pk: 1, base: () => T('unloadLoose'), ...mv(D.looseSort, TV.modes.unload, 1 / cap.containerPkgs), done: () => {
       L('unl', { k: 'l' }); unloadDone();
       if (++tr.looseDone === tr.loose.length) {
         // Los sueltos reciben WI-2 al terminar la descarga del camión
@@ -408,7 +422,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
   const toHospital = (pk: Pkg): void => {
     hosp.in++;
     L('hosIn');
-    submit('hospital', { pk: 1, base: () => T('relabel'), done: () => {
+    submit('hospital', { pk: 1, base: () => T('relabel'), ...mv(D.hospital, TV.modes.hospital, 1 / cap.basketPkgs), done: () => {
       if (rnd() < HOS.relabelPct / 100) { hosp.relabeled++; pk.relabeled = true; L('hosOut', { k: 'r' }); submitSort(pk); }
       else { hosp.destroyed++; L('hosOut', { k: 'd' }); finish(); resolve(pk); }
     } });
@@ -421,7 +435,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
   /** Sorting manual con PDA (también el de los no mecanizables y las bocas compartidas del sorter). La excepción se detecta al escanear. */
   const manualSort = (pk: Pkg, key: TimeKey, free: boolean): void => {
     let ex: string | null = null;
-    submit('sort', { pk: 1, free,
+    submit('sort', { pk: 1, free, ...walk(D.sortGroup[pk.g]),
       base: () => { ex = exception(pk); return T(key) + (ex ? 0 : reserve(pk)); },
       done: () => { if (ex) toHospital(pk); else place(pk); } });
   };
@@ -437,7 +451,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
       done: () => {
         sorterSt.inducted++; hadd('inducted', 1);
         if (ex) { if (ex === 'noRead') sorterSt.noRead++; toHospital(pk); }
-        else if (shared.has(sk)) { sorterSt.sharedChute++; submit('sort', { pk: 1, free: true, base: () => T('sort') + reserve(pk), done: () => place(pk) }); }
+        else if (shared.has(sk)) { sorterSt.sharedChute++; submit('sort', { pk: 1, free: true, ...walk(D.sortGroup[pk.g]), base: () => T('sort') + reserve(pk), done: () => place(pk) }); }
         else place(pk);
       } });
   }
@@ -456,7 +470,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
       if (g.reverify) {
         let pend = chunks.length;
         const all: Pkg[] = [];
-        chunks.forEach(c => submit('reverify', { pk: c.pk.length, base: () => Tn('reverify', c.pk.length) + fixMissorts(c.pk),
+        chunks.forEach(c => submit('reverify', { pk: c.pk.length, base: () => Tn('reverify', c.pk.length) + fixMissorts(c.pk), ...mv(D.first[gi], TV.modes.baskets),
           start: () => { L('rvS', { sk: c.sk, n: c.pk.length }); inBaskets.n -= c.pk.length; basketsWaiting -= c.pk.length; },
           done: () => {
             EV['AV-1'] += c.pk.length; scans[gi] += c.pk.length; all.push(...c.pk); L('rvE', { n: c.pk.length });
@@ -466,7 +480,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
               all.forEach(p => { if (cur.length && (cur.length + 1 > cap.containerPkgs || l + p.vol > cap.containerLiters)) { conts.push(cur); cur = []; l = 0; } cur.push(p); l += p.vol; });
               if (cur.length) conts.push(cur);
               containers[gi] += conts.length;
-              conts.forEach(part => submit('reverify', { pk: 0, base: () => T('container'), done: () => { L('cont', { g: gi, n: part.length }); toDest(gi, mkUnit(part, null)); } }));
+              conts.forEach(part => submit('reverify', { pk: 0, base: () => T('container'), ...mv(D.second[gi], TV.modes.containers), done: () => { L('cont', { g: gi, n: part.length }); toDest(gi, mkUnit(part, null)); } }));
             }
           } }));
       } else chunks.forEach(c => { inBaskets.n -= c.pk.length; basketsWaiting -= c.pk.length; toDest(gi, mkUnit(c.pk, c.sk)); });
@@ -484,7 +498,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     if (G[gi].dest === 'branch') {
       u.pk.forEach(setRc0);
       L('brT', { sk: u.sk, n: u.pk.length });
-      submit('branch', { pk: u.pk.length, base: () => Tn('branchSort', u.pk.length) + fixMissorts(u.pk), done: () => {
+      submit('branch', { pk: u.pk.length, base: () => Tn('branchSort', u.pk.length) + fixMissorts(u.pk), ...(G[gi].reverify ? {} : mv(D.first[gi], TV.modes.baskets)), done: () => {
         const rc: Record<string, number> = {};
         let scanned = 0;
         u.pk.forEach(p => {
@@ -543,7 +557,9 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
       if (tk.units > 0 && (tk.m3 + u.m3 > cap.truckM3 || tk.kg + u.kg > cap.truckKg)) break;
       stage[gi].shift();
       tk.m3 += u.m3; tk.kg += u.kg; tk.units++;
-      const job: Job & { unit: Unit } = { unit: u, pk: 0, base: () => T('load'),
+      // sin reverificación, el canasto se lleva desde su zona; con reverificación ya está en el carril
+      const a = mv(D.stageDock[gi], TV.modes.load), b = G[gi].reverify ? { tr: 0, m: 0 } : mv(D.first[gi], TV.modes.baskets);
+      const job: Job & { unit: Unit } = { unit: u, pk: 0, base: () => T('load'), tr: a.tr + b.tr, m: a.m + b.m,
         start: () => { tk.inflight++; },
         done: () => {
           tk.inflight--; tk.pkgs += u.pk.length;
@@ -573,7 +589,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
         if (!pk.length) { if (d < 7) pickups.push({ route: r, day: d, time: now, pkgs: 0 }); return; }
         routeBuf[r] = [];
         L('pmA', { r });
-        at(now + T('handover'), () => {
+        at(now + T('handover') + D.routeExit / (TV.speeds.cart * 60), () => { // el cartero lleva su carro hasta la salida
           EV['LM-12'] += pk.length; pk.forEach(() => finish());
           pickups.push({ route: r, day: d, time: now, pkgs: pk.length });
           L('pick', { r, n: pk.length });
@@ -653,5 +669,6 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     sorter: ST === 'sorter' ? { ...sorterSt, peakPerHour: Math.max(0, ...hourly.inducted) } : null,
     events: EV, hourly: { sorted: hourly.sorted, rc0: hourly.rc0 }, samples: samplesOut, warnings, log,
     routeTotals: routeTot,
+    travel: { km: travel.m / 1000, hours: travel.min / 60 },
   };
 }

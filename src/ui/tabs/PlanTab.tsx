@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { SimResult, Sample } from '../../engine/simulate';
-import { PROCESSES, type Warehouse } from '../../model/types';
+import { PROCESSES, type PlanBackground, type Project, type Warehouse } from '../../model/types';
+import { LayoutEditor } from './LayoutEditor';
 import { DAY, fmtHM, hm } from '../../model/time';
 import { buildPlan, FxLayer, Player, renderPlan, type Geo, type PlayState } from '../../plan/plan';
 import { nf, t } from '../../i18n';
@@ -27,7 +28,14 @@ function activeShifts(w: Warehouse, tt: number): string[] {
   return out;
 }
 
-export function PlanTab({ w, r }: { w: Warehouse; r: SimResult }) {
+interface Props { w: Warehouse; r: SimResult; plan: PlanBackground | null; onProject: (fn: (p: Project) => void) => void; say: (m: string) => void }
+
+export function PlanTab(props: Props) {
+  const [edit, setEdit] = useState(false);
+  return edit ? <LayoutEditor plan={props.plan} onProject={props.onProject} say={props.say} onClose={() => setEdit(false)} /> : <PlanView {...props} onEdit={() => setEdit(true)} />;
+}
+
+function PlanView({ w, r, plan, onEdit }: Props & { onEdit: () => void }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const ref = useRef<{ G: Geo; P: Player; fx: FxLayer; raf: number; last: number } | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -50,7 +58,7 @@ export function PlanTab({ w, r }: { w: Warehouse; r: SimResult }) {
   useEffect(() => {
     if (!svgRef.current) return;
     if (ref.current) { cancelAnimationFrame(ref.current.raf); ref.current.fx.clear(); }
-    const G = buildPlan(svgRef.current, w);
+    const G = buildPlan(svgRef.current, w, plan);
     const P = new Player(w, r);
     ref.current = { G, P, fx: new FxLayer(G), raf: 0, last: 0 };
     P.seek(start);
@@ -58,7 +66,7 @@ export function PlanTab({ w, r }: { w: Warehouse; r: SimResult }) {
     draw();
     publish();
     return () => { if (ref.current) cancelAnimationFrame(ref.current.raf); };
-  }, [r]);
+  }, [r, plan]);
 
   const pause = () => { const c = ref.current; if (c) cancelAnimationFrame(c.raf); setPlaying(false); publish(); };
   const play = () => {
@@ -116,9 +124,10 @@ export function PlanTab({ w, r }: { w: Warehouse; r: SimResult }) {
           <select value={speed} onChange={e => setSpeed(+e.currentTarget.value)}>{SPEEDS.map(s => <option value={s}>{t('plan.speed', { n: s })}</option>)}</select>
           <input type="range" class="slider" min={0} max={end} step={1} value={tt} onInput={e => seek(+e.currentTarget.value)} />
           <button class="btn" onClick={() => seek(end)}>{t('plan.end')}</button>
+          <button class="btn" onClick={() => { pause(); onEdit(); }}>{t('ed.open')}</button>
         </div>
         <div class="daybar">{[0, 1, 2, 3, 4, 5, 6].map(d => <button class={Math.floor(tt / DAY) === d ? 'on' : ''} onClick={() => seek(d * DAY + start % DAY)}>{t('d' + d)}</button>)}</div>
-        <div class="planwrap"><svg ref={svgRef} id="plan" viewBox="0 0 1180 520" xmlns="http://www.w3.org/2000/svg" /></div>
+        <div class="planwrap"><svg ref={svgRef} id="plan" xmlns="http://www.w3.org/2000/svg" /></div>
         <div class="legend">
           <span><i style={{ background: 'var(--orange)' }} />{t('plan.legendRv')}</span>
           <span><i style={{ background: 'var(--green)' }} />{t('plan.legendDir')}</span>

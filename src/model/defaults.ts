@@ -1,3 +1,4 @@
+import { autoLayout, DEFAULT_TRAVEL } from './layout';
 import { PROCESSES, type Days, type ProcessKey, type Project, type SortingGroup, type Warehouse, type Shift, type InboundTruck, type Tri, type TimeKey, type Sorter, type FixedCost, type Discrepancies, type Scenario, type SortingType } from './types';
 
 let counter = 0;
@@ -67,6 +68,12 @@ function group(name: string, share: number, reverify: boolean, dest: 'stageout' 
 /** Plantilla basada en la bodega de Jamaica (presentación original). Los valores
     de volumen, tiempos, dotación y costos son supuestos estándar editables. */
 export function jamaicaWarehouse(): Warehouse {
+  return withLayout(jamaicaBase());
+}
+/** Dibuja la disposición por defecto para los grupos de la bodega. */
+function withLayout(w: Warehouse): Warehouse { w.layout = autoLayout(w); return w; }
+
+function jamaicaBase(): Warehouse {
   const inbound: InboundTruck[] = [
     { id: uid('i'), name: 'Aduana AM', days: [...MON_SAT] as Days, arrival: '07:30', packages: 2000,
       mix: { boxes: 70, uld: 20, loose: 10 }, pkgsPerBox: 60, pkgsPerUld: 150, volumeVarPct: 10, timeVarMin: 30 },
@@ -112,10 +119,12 @@ export function jamaicaWarehouse(): Warehouse {
     costs: { overtimeMultiplier: 1.5, relabelUsd: 0.05, fixed: defaultFixedCosts() },
     sorting: { type: 'manual', sorter: structuredClone(DEFAULT_SORTER) },
     hospital: { exceptionPct: 1.5, relabelPct: 75 },
-    multiskill: { bufferMin: 10, changeMin: 5, priority: [...PROCESSES] },
+    multiskill: { bufferMin: 10, changeMin: 2, priority: [...PROCESSES] },
     cptLeadMin: 240,
     discrepancies: structuredClone(DEFAULT_DISCREPANCIES),
     replicas: 20,
+    layout: null,
+    travel: structuredClone(DEFAULT_TRAVEL),
   };
 }
 
@@ -129,16 +138,16 @@ export function blankWarehouse(): Warehouse {
   w.inbound[0].packages = 1000;
   w.outboundLoadWindowMin = 60;
   w.groups = [group('Grupo 1', 100, false, 'stageout', '16:00', [['Servicio 1', true]])];
-  return w;
+  return withLayout(w);
 }
 
 /** Bodega modelo genérica: todas las funciones activas y sorting con Pick to Light. Valores supuestos editables. */
 export function modelWarehouse(): Warehouse {
-  const w = jamaicaWarehouse();
+  const w = jamaicaBase();
   const truck = (name: string, arrival: string, packages: number, boxes: number, uld: number, loose: number): InboundTruck =>
     ({ id: uid('i'), name, days: [...MON_SAT] as Days, arrival, packages, mix: { boxes, uld, loose }, pkgsPerBox: 50, pkgsPerUld: 160, volumeVarPct: 10, timeVarMin: 30 });
   const two = (g: SortingGroup, second: string): SortingGroup => { g.outbound.push({ id: uid('o'), days: [...MON_SAT] as Days, arrival: second }); return g; };
-  return {
+  return withLayout({
     ...w,
     id: uid('w'), name: 'Bodega Modelo', country: '', notes: 'Plantilla genérica con Pick to Light, hospital, discrepancias, multiskill y costos.',
     packageProfile: { weightKg: 1.8, lengthCm: 28, widthCm: 20, heightCm: 12, variationPct: 25 },
@@ -162,7 +171,7 @@ export function modelWarehouse(): Warehouse {
       { ...w.shifts[1], id: uid('t'), staff: staff({ unload: 2, decon: 1, sort: 3, reverify: 2, branch: 2, load: 2 }) },
     ],
     sorting: { type: 'ptl', sorter: structuredClone(DEFAULT_SORTER) },
-  };
+  });
 }
 
 /** Siempre 3 escenarios: base, +20 % de volumen y otro tipo de sorting. */
@@ -180,5 +189,5 @@ export function defaultScenarios(w: Warehouse): Scenario[] {
 export function newProject(w: Warehouse = jamaicaWarehouse()): Project {
   const now = new Date().toISOString();
   const scenarios = defaultScenarios(w);
-  return { format: 'dtwin', version: 2, name: w.name, createdAt: now, updatedAt: now, warehouse: w, scenarios, activeScenario: scenarios[0].id };
+  return { format: 'dtwin', version: 2, name: w.name, createdAt: now, updatedAt: now, warehouse: w, scenarios, activeScenario: scenarios[0].id, plan: null };
 }

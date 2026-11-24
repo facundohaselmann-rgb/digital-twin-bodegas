@@ -141,6 +141,38 @@ export interface Discrepancies {
   postmanFoundPct: number;
 }
 
+/* ---------------------------- layout ---------------------------- */
+/** Zonas que se dibujan sobre el plano. `group`, `stage` y `outDoor` existen una por grupo (ref = id del grupo). */
+export const ZONE_KINDS = ['inbound', 'decon', 'sort', 'hospital', 'reverify', 'group', 'stage', 'outDoor', 'branch', 'exit'] as const;
+export type ZoneKind = typeof ZONE_KINDS[number];
+/** Rectángulo en metros; (0,0) es la esquina superior izquierda de la bodega. */
+export interface Zone { kind: ZoneKind; ref: string; x: number; y: number; w: number; h: number }
+export interface Layout { widthM: number; heightM: number; zones: Zone[] }
+
+export type TravelMode = 'walk' | 'cart' | 'jack';
+/** Tramos con medio de transporte elegible (el sorting es siempre a pie y los ULD van siempre en transpaleta). */
+export const LEGS = ['unload', 'feed', 'baskets', 'containers', 'load', 'hospital'] as const;
+export type Leg = typeof LEGS[number];
+export interface Travel {
+  /** m/s por medio de transporte. */
+  speeds: Record<TravelMode, number>;
+  /** Segundos para tomar y dejar la carga en cada viaje. */
+  handleSec: number;
+  modes: Record<Leg, TravelMode>;
+}
+
+/** Plano de fondo (compartido por todos los escenarios): imagen (PNG/JPG o PDF ya rasterizado) o trazos de un DXF. */
+export interface PlanBackground {
+  kind: 'image' | 'dxf';
+  name: string;
+  /** data URL de la imagen, o atributo `d` de un path SVG para el DXF. */
+  data: string;
+  /** Tamaño en unidades propias: píxeles de la imagen o unidades del dibujo CAD. */
+  w: number; h: number;
+  /** Metros por unidad propia. */
+  scale: number;
+}
+
 export interface Warehouse {
   id: string;
   name: string;
@@ -169,6 +201,9 @@ export interface Warehouse {
   discrepancies: Discrepancies;
   /** Corridas con distintas semillas para dar cada KPI con su margen de error. */
   replicas: number;
+  /** Disposición dibujada; null = sin distancias (proyectos anteriores a la iteración 4). */
+  layout: Layout | null;
+  travel: Travel;
 }
 
 export interface Scenario { id: string; name: string; warehouse: Warehouse }
@@ -183,6 +218,8 @@ export interface Project {
   warehouse: Warehouse;
   scenarios: Scenario[];
   activeScenario: string;
+  /** Plano de la bodega real; lo comparten todos los escenarios. */
+  plan?: PlanBackground | null;
 }
 
 /** Advertencia de validación: clave i18n + parámetros. */

@@ -1,6 +1,7 @@
-import { COST_CATEGORIES, PROCESSES, TIME_KEYS, type Days, type ProcessKey, type Routes, type Warehouse, type Warning, type PackageProfile } from './types';
+import { COST_CATEGORIES, LEGS, PROCESSES, TIME_KEYS, ZONE_KINDS, type Days, type Layout, type TravelMode, type ProcessKey, type Routes, type Warehouse, type Warning, type PackageProfile } from './types';
 import { DEFAULT_DISCREPANCIES, DEFAULT_SORTER, DEFAULT_TIMES, MON_SAT, defaultFixedCosts, uid } from './defaults';
 import { hm } from './time';
+import { DEFAULT_TRAVEL, syncLayout } from './layout';
 
 const num = (v: unknown, d: number, lo?: number, hi?: number): number => {
   let x = typeof v === 'number' ? v : parseFloat(String(v));
@@ -25,6 +26,14 @@ function profile(p: Partial<PackageProfile> | null | undefined): PackageProfile 
     heightCm: num(q.heightCm, 12, 1, 1000),
     variationPct: num(q.variationPct, 0, 0, 90),
   };
+}
+
+function layout(L: Layout | null | undefined): Layout | null {
+  if (!L || typeof L !== 'object') return null;
+  const widthM = num(L.widthM, 50, 5, 2000), heightM = num(L.heightM, 25, 5, 2000);
+  const zones = (Array.isArray(L.zones) ? L.zones : []).filter(z => z && (ZONE_KINDS as readonly string[]).includes(z.kind))
+    .map(z => ({ kind: z.kind, ref: String(z.ref ?? ''), x: num(z.x, 0, -widthM, 2 * widthM), y: num(z.y, 0, -heightM, 2 * heightM), w: num(z.w, 1, 0.2, 2000), h: num(z.h, 1, 0.2, 2000) }));
+  return { widthM, heightM, zones };
 }
 
 /** Corrige valores fuera de rango (en el lugar) y devuelve advertencias para mostrar. */
@@ -122,6 +131,17 @@ export function normalize(w: Warehouse): Warning[] {
   w.discrepancies = { customsPct: num(d.customsPct, 0, 0, 100), postmanPct: num(d.postmanPct, 0, 0, 100), postmanFoundPct: num(d.postmanFoundPct, 50, 0, 100),
     missortPct: { manual: num(mp.manual, 0, 0, 100), ptl: num(mp.ptl, 0, 0, 100), sorter: num(mp.sorter, 0, 0, 100) } };
   w.replicas = int(w.replicas, 20, 1, 100);
+
+  /* traslados y layout */
+  const tv = w.travel ?? DEFAULT_TRAVEL, sp = tv.speeds ?? DEFAULT_TRAVEL.speeds, md = (tv.modes ?? {}) as Record<string, unknown>;
+  const mode = (v: unknown, d: TravelMode): TravelMode => (v === 'walk' || v === 'cart' || v === 'jack' ? v : d);
+  w.travel = {
+    speeds: { walk: num(sp.walk, 1.2, 0.05, 20), cart: num(sp.cart, 1, 0.05, 20), jack: num(sp.jack, 0.8, 0.05, 20) },
+    handleSec: num(tv.handleSec, 30, 0, 3600),
+    modes: Object.fromEntries(LEGS.map(l => [l, mode(md[l], DEFAULT_TRAVEL.modes[l])])) as typeof DEFAULT_TRAVEL.modes,
+  };
+  w.layout = layout(w.layout);
+  syncLayout(w);
 
   /* turnos */
   w.shifts = Array.isArray(w.shifts) ? w.shifts : [];

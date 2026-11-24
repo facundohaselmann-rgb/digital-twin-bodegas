@@ -9,7 +9,7 @@ Funciona **100 % local y sin conexión**: es un único archivo HTML que se abre 
 1. Descargá [`releases/digital-twin-bodegas.html`](releases/digital-twin-bodegas.html). En GitHub: botón **Download raw file**.
 2. Guardalo en tu carpeta de **Google Drive para escritorio**, por ejemplo `Mi unidad/Digital Twin/`.
 3. Abrilo con doble clic en **Chrome**.
-4. **Nuevo → Desde plantilla Jamaica** (o **Bodega en blanco**), configurá la bodega en **Configuración** y mirá **Plano y simulación** y **Resultados**.
+4. **Nuevo → Desde plantilla Jamaica** (o **Bodega en blanco**), configurá la bodega en **Configuración**, dibujá la disposición con **✎ Editar plano** y mirá **Plano y simulación** y **Resultados**.
 5. **Guardar** (Ctrl+S) crea un archivo `.dtwin` donde elijas. Si lo guardás en la carpeta de Drive, se sincroniza solo. **Abrir** lo recupera.
 
 Cada cambio se vuelve a simular al instante. El idioma (ES/EN) se cambia arriba a la derecha.
@@ -35,7 +35,9 @@ Cada cambio se vuelve a simular al instante. El idioma (ES/EN) se cambia arriba 
 | Corridas múltiples | 20 corridas con distintas semillas por defecto; cada KPI con media ± margen al 95 % |
 | Escenarios | Cada proyecto trae 3 escenarios (base, +20 % volumen y otro tipo de sorting). Se editan, duplican y comparan lado a lado |
 | Reporte | Exportar PDF con la impresión de Chrome ("Guardar como PDF") y CSV |
-| Plantillas | Jamaica (sorting manual con PDA), **Modelo** (genérica, Pick to Light y todas las funciones) y bodega en blanco |
+| Layout y plano | **✎ Editar plano** en la pestaña del plano: cada proceso, cada grupo de canastos, cada carril de Stage out, cada puerta de carga, Branch y la salida de carteros es una zona en metros que se arrastra y se redimensiona. El plano real se carga de fondo como **PDF** (se elige la página), **imagen** (PNG/JPG) o **CAD en DXF** (con sus medidas); la escala se fija marcando dos puntos de una medida conocida. El DWG se exporta antes como DXF o PDF. Cada escenario tiene su propia disposición; el plano de fondo es del proyecto |
+| Traslados | Distancia en ángulo recto entre los bordes más cercanos de cada zona (las zonas que se tocan se pasan la carga sin viaje; el recorrido dentro de una zona ya está en los tiempos estándar). Cada viaje suma ida y vuelta a la velocidad del medio (a pie 1,2 m/s, carro 1,0 m/s, transpaleta 0,8 m/s) más 30 s para tomar y dejar la carga. Sorting manual y Pick to Light: a pie hasta los canastos; sorter: la cinta lleva los paquetes. ULD: siempre en transpaleta. Cambio de puesto: 2 min más la caminata entre zonas. Resultado: km recorridos, horas de traslado y su parte del costo |
+| Plantillas | Jamaica (sorting manual con PDA, disposición del plano de la presentación original a 50 × 25 m), **Modelo** (genérica, Pick to Light y todas las funciones) y bodega en blanco |
 | Resultados | CPT a tiempo por grupo, tiempo WI-2 → RC-0 (media, P90, P95, P98), utilización y cambios de puesto por turno, hospital, sorter, pendiente al cierre de cada turno, camiones de entrada y salida, eventos de Tracking, gráficos semanales, exportación a CSV |
 
 Los valores por defecto (volúmenes, tiempos, dotación, costos) son **supuestos estándar editables**. La estructura de grupos y servicios viene de la operación de Jamaica.
@@ -60,7 +62,7 @@ Para publicar una versión, se copia `dist/index.html` a `releases/digital-twin-
 src/
   model/      tipos (modelo de datos v2), plantillas, validación, utilidades de tiempo
   engine/     motor de eventos discretos (semanal), RNG, cola O(1), Web Worker
-  plan/       plano SVG animado y reproductor del log de eventos
+  plan/       plano SVG animado desde el layout, reproductor del log e importadores de plano (PDF, imagen, DXF)
   storage/    archivos de proyecto .dtwin (File System Access API) y autoguardado
   i18n/       textos en español e inglés
   ui/         interfaz (Preact): pestañas de plano, resultados y configuración
@@ -75,5 +77,5 @@ Los CSV con datos de paquetes **no se suben a este repositorio** (están en `.gi
 
 ## Roadmap
 
-- **Iteración 4 (MVP):** layout sobre el plano PDF con escala y distancias.
-- **Siguientes:** retornos (DV-1, LM-4, RT-1, RT-2), editor de layout completo, calibración con históricos (CSV), optimización de dotación.
+- **Iteración 4 (MVP, esta versión):** layout sobre el plano real (PDF, imagen o DXF) con escala y distancias.
+- **Siguientes:** retornos (DV-1, LM-4, RT-1, RT-2), layout completo con muros, columnas, pasillos y equipos limitados, calibración con históricos (CSV), optimización de dotación.

@@ -45,6 +45,7 @@ export function ResultsTab({ w, r, rep, cmp }: { w: Warehouse; r: SimResult; rep
           <div class="quad"><div><small>{t('res.mean')}</small><b>{hours(T.mean)}</b></div><div><small>P90</small><b>{hours(T.p90)}</b></div><div><small>P95</small><b>{hours(T.p95)}</b></div><div><small>P98</small><b>{hours(T.p98)}</b></div></div></div>
         <div class="stat"><div class="l">{t('res.kpiHours')}</div><div class="v">{hrs(busy)} h</div><div class="d">{t('res.kpiHoursSub', { paid: hrs(paid), util: pct(paid ? busy / paid : 0) })}</div></div>
         <div class="stat"><div class="l">{t('res.kpiOT')}</div><div class="v">{hrs(ot)} h</div><div class="d">×{nf(w.costs.overtimeMultiplier, 1)}</div></div>
+        <div class="stat"><div class="l">{t('res.kpiTravel')}</div><div class="v">{nf(r.travel.km, 1)} km</div><div class="d">{w.layout ? t('res.kpiTravelSub', { h: nf(r.travel.hours, 1), pct: pct(busy ? (r.travel.hours * 60) / busy : 0) }) : t('res.kpiTravelOff')}</div></div>
         <div class="stat"><div class="l">{t('res.kpiChanges')}</div><div class="v">{nf(changes)}</div><div class="d">{t('res.kpiChangesSub', { h: hrs(changeMin) })}</div></div>
         <div class="stat"><div class="l">{t('res.kpiHospital')}</div><div class="v">{nf(r.hospital.in)}</div><div class="d">{t('res.kpiHospitalSub', { r: nf(r.hospital.relabeled), d: nf(r.hospital.destroyed) })}</div></div>
         <div class="stat"><div class="l">{t('res.kpiScans')}</div><div class="v">{nf(r.totals.pkgs ? totalScans / r.totals.pkgs : 0, 2)}</div></div>
@@ -59,6 +60,7 @@ export function ResultsTab({ w, r, rep, cmp }: { w: Warehouse; r: SimResult; rep
             <tbody>
               {([['res.cLabor', cost.labor], ['res.cOT', cost.overtime], ['res.cSupplies', cost.supplies]] as const).map(([l, v]) => <tr><td>{t(l)}</td><td class="n">{usd(v)}</td><td class="n">{nf(v / r.totals.inbound, 3)}</td><td class="n">{pct(v / cost.total)}</td></tr>)}
               <tr><td class="hint">↳ {t('res.cIdle')}</td><td class="n hint">{usd(cost.idle)}</td><td class="n hint">{nf(cost.idle / r.totals.inbound, 3)}</td><td class="n hint">{pct(cost.idle / cost.total)}</td></tr>
+              {cost.travel > 0 && <tr><td class="hint">↳ {t('res.cTravel')}</td><td class="n hint">{usd(cost.travel)}</td><td class="n hint">{nf(cost.travel / r.totals.inbound, 3)}</td><td class="n hint">{pct(cost.travel / cost.total)}</td></tr>}
               <tr><td><b>{t('res.cFixed')}</b></td><td class="n"><b>{usd(cost.fixedTotal)}</b></td><td class="n">{nf(cost.fixedTotal / r.totals.inbound, 3)}</td><td class="n">{pct(cost.fixedTotal / cost.total)}</td></tr>
               {COST_CATEGORIES.filter(c => cost.fixed[c] > 0).map(c => <tr><td class="hint">↳ {t('cc.' + c)}</td><td class="n">{usd(cost.fixed[c])}</td><td class="n">{nf(cost.fixed[c] / r.totals.inbound, 3)}</td><td class="n">{pct(cost.fixed[c] / cost.total)}</td></tr>)}
               <tr><td><b>{t('total')}</b></td><td class="n"><b>{usd(cost.total)}</b></td><td class="n"><b>{nf(cost.perPkg, 3)}</b></td><td class="n">100%</td></tr>
@@ -192,6 +194,8 @@ function exportCSV(w: Warehouse, r: SimResult): void {
   r.processes.forEach(p => line(t('p.' + p.key), p.jobs, h(p.busyMin), p.waitAvg, p.maxQueuePkgs));
   rows.push('');
   line(t('res.kpiHospital'), r.hospital.in, r.hospital.relabeled, r.hospital.destroyed);
+  rows.push('');
+  line(t('res.kpiTravel'), 'km', r.travel.km, 'h', r.travel.hours);
   rows.push('');
   line(t('res.group'), t('res.arrival'), t('res.departure'), t('res.units'), t('res.pkgs'), 'm3', 'kg', t('res.left'), t('res.late') + ' (min)');
   r.outbound.forEach(o => line(o.group, dt(o.arrival), dt(o.departure), o.units, o.pkgs, o.m3, o.kg, o.leftPkgs, o.late));
