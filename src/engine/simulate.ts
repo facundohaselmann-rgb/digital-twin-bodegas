@@ -19,7 +19,7 @@ export interface Sample { t: number; busy: Record<ProcessKey, number>; duty: Rec
 export interface ProcessStat { key: ProcessKey; jobs: number; busyMin: number; waitAvg: number; maxQueuePkgs: number }
 export interface ShiftStat { shiftId: string; name: string; night: boolean; workers: number; paidMin: number; busyMin: number; otMin: number; util: number; changes: number; changeMin: number }
 export interface DayStat { day: number; arrived: number; rc0: number; finished: number; paidMin: number; busyMin: number; otMin: number; lastActivity: number | null }
-export interface OutboundStat { gi: number; group: string; day: number; arrival: number; scheduled: number; departure: number; units: number; pkgs: number; m3: number; kg: number; late: number; leftUnits: number; leftPkgs: number }
+export interface OutboundStat { gi: number; group: string; day: number; arrival: number; scheduled: number; departure: number; units: number; pkgs: number; m3: number; kg: number; late: number; leftPkgs: number }
 export interface PickupStat { route: number; day: number; time: number; pkgs: number }
 export interface BacklogStat { shift: string; day: number; time: number; wip: Wip; total: number }
 export interface TimeStats { n: number; mean: number; p90: number; p95: number; p98: number }
@@ -29,7 +29,7 @@ export interface InboundStat { name: string; day: number; arrival: number; pkgs:
 
 export interface SimResult {
   seed: number;
-  totals: { pkgs: number; boxes: number; ulds: number; loose: number; finished: number; unfinished: number; carried: number; kg: number; m3: number };
+  totals: { pkgs: number; inbound: number; boxes: number; ulds: number; loose: number; finished: number; unfinished: number; carried: number; kg: number; m3: number };
   endT: number;
   processes: ProcessStat[];
   shifts: ShiftStat[];
@@ -42,6 +42,8 @@ export interface SimResult {
   time: TimeStats;
   cpt: CptStat;
   hospital: { in: number; relabeled: number; destroyed: number };
+  /** customs: faltantes de aduana; missortFixed/missortUndetected: errores de sorting; postman*: faltantes en LM-1 (encontrados o siniestros). */
+  discrepancies: { customs: number; missortFixed: number; missortUndetected: number; postman: number; postmanFound: number; losses: number };
   sorter: { inducted: number; nonConveyable: number; sharedChute: number; noRead: number; peakPerHour: number } | null;
   events: Record<string, number>;
   hourly: { sorted: number[]; rc0: number[] };
@@ -50,11 +52,10 @@ export interface SimResult {
   log: LogEv[];
   /** Paquetes por ruta, para escalar la animación. */
   routeTotals: number[];
-  swaps: number;
 }
 
 /* ------------------------------------------------------------------ */
-interface Pkg { ti: number; g: number; s: number; r: number; vol: number; kg: number; wi2: number; bi: number; nc: boolean; relabeled: boolean }
+interface Pkg { ti: number; g: number; s: number; r: number; vol: number; kg: number; wi2: number; bi: number; nc: boolean; relabeled: boolean; bad: boolean }
 interface Unit { pk: Pkg[]; sk: string | null; m3: number; kg: number }
 interface Job { pk: number; base: () => number; machine?: () => number; start?: () => void; done: () => void; cancelled?: boolean; started?: boolean; eq?: number; free?: boolean }
 /** state: 0 fuera de turno, 1 libre, 2 trabajando, 3 en pausa, 4 cambiando de puesto */
@@ -82,7 +83,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
   const cap = W.capacity;
   const G = W.groups;
   const R = W.routes.count;
-  const ST = W.sorting.type, SR = W.sorting.sorter, HOS = W.hospital, CHANGE = W.multiskill.changeMin, BUFFER = W.multiskill.bufferMin;
+  const ST = W.sorting.type, SR = W.sorting.sorter, HOS = W.hospital, DIS = W.discrepancies, CHANGE = W.multiskill.changeMin, BUFFER = W.multiskill.bufferMin;
   const warnings: Warning[] = [];
   const log: LogEv[] = [];
   let now = 0;
@@ -283,7 +284,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     const kg = pr.weightKg * fk;
     // shortcut: se comparan las medidas sin rotar el paquete; alcanza mientras no se modelen paquetes alargados
     const nc = ST === 'sorter' && (kg > SR.maxKg || pr.lengthCm * f > SR.maxLengthCm || pr.widthCm * f > SR.maxWidthCm || pr.heightCm * f > SR.maxHeightCm);
-    return { ti, g, s, r: G[g].dest === 'branch' ? Math.floor(rnd() * R) : -1, vol: (pr.lengthCm * pr.widthCm * pr.heightCm / 1000) * f * f * f, kg, wi2: -1, bi: -1, nc, relabeled: false };
+    return { ti, g, s, r: G[g].dest === 'branch' ? Math.floor(rnd() * R) : -1, vol: (pr.lengthCm * pr.widthCm * pr.heightCm / 1000) * f * f * f, kg, wi2: -1, bi: -1, nc, relabeled: false, bad: false };
   };
 
   interface InTruck { ti: number; name: string; day: number; arr: number; ulds: Pkg[][]; boxes: Pkg[][]; loose: Pkg[]; total: number; sorted: number; looseDone: number; unloadLeft: number; unloadEnd: number | null; sortEnd: number | null }
@@ -313,9 +314,10 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
   const hadd = (k: 'sorted' | 'rc0' | 'inducted', n: number): void => { const h = Math.floor(now / 60); const a = hourly[k]; while (a.length <= h) a.push(0); a[h] += n; };
   const dayRc0 = new Array(14).fill(0), dayFin = new Array(14).fill(0);
   const finish = (): void => { unfinished--; dayFin[Math.min(13, Math.floor(now / DAY))]++; endT = Math.max(endT, now); };
-  let swaps = 0, basketsWaiting = 0;
+  let basketsWaiting = 0;
   const inBaskets = { n: 0 };
   const hosp = { in: 0, relabeled: 0, destroyed: 0 };
+  const disc = { customs: 0, missortFixed: 0, missortUndetected: 0, postman: 0, postmanFound: 0, losses: 0 };
   const sorterSt = { inducted: 0, nonConveyable: 0, sharedChute: 0, noRead: 0 };
 
   /* CPT: salidas de camión (Stage out) o retiros de carteros (Branch), ordenados */
@@ -343,7 +345,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     L('inA', { ti: tr.ti, n: tr.total });
     if (!tr.total) { tr.unloadEnd = now; tr.sortEnd = now; L('inD', { ti: tr.ti }); return; }
     const unloadDone = (): void => { if (--tr.unloadLeft === 0) { tr.unloadEnd = now; L('inD', { ti: tr.ti }); } };
-    const toSort = (pk: Pkg[]): void => pk.forEach(submitSort);
+    const toSort = (pk: Pkg[]): void => pk.forEach(p => { if (rnd() * 100 < DIS.customsPct) { disc.customs++; finish(); resolve(p); } else submitSort(p); });
     tr.ulds.forEach(u => submit('unload', { pk: u.length, base: () => T('unloadUld'), done: () => {
       u.forEach(p => (p.wi2 = now)); EV['WI-2'] += u.length; L('unl', { k: 'u' }); unloadDone();
       submit('decon', { pk: u.length, base: () => T('emptyUld'), start: () => L('decS', { k: 'u' }), done: () => { L('decE', { k: 'u', n: u.length }); toSort(u); } });
@@ -375,7 +377,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     let f = fill.get(key), extra = 0;
     if (!f) { f = { n: 0, l: 0, idx: 0, assigned: [0] }; fill.set(key, f); basketsUsed[pk.g]++; }
     else if (f.n + 1 > cap.basketPkgs || f.l + pk.vol > cap.basketLiters) {
-      f.idx++; f.n = 0; f.l = 0; f.assigned.push(0); basketsUsed[pk.g]++; swaps++; extra = T('swap');
+      f.idx++; f.n = 0; f.l = 0; f.assigned.push(0); basketsUsed[pk.g]++; extra = T('swap');
       const full = f.idx - 1;
       if (sendsOnFull(pk.g)) at(now, () => sendIfComplete(key, full));
     }
@@ -397,6 +399,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     let b = baskets.get(key);
     if (!b) { b = []; baskets.set(key, b); }
     (b[pk.bi] ||= []).push(pk);
+    pk.bad = rnd() * 100 < DIS.missortPct[ST];
     EV['WI-3 + WI-4']++; scans[pk.g]++; hadd('sorted', 1); inBaskets.n++; basketsWaiting++;
     L('sortE', { sk: pk.g + '-' + pk.s });
     if (sendsOnFull(pk.g)) sendIfComplete(key, pk.bi);
@@ -453,7 +456,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
       if (g.reverify) {
         let pend = chunks.length;
         const all: Pkg[] = [];
-        chunks.forEach(c => submit('reverify', { pk: c.pk.length, base: () => Tn('reverify', c.pk.length),
+        chunks.forEach(c => submit('reverify', { pk: c.pk.length, base: () => Tn('reverify', c.pk.length) + fixMissorts(c.pk),
           start: () => { L('rvS', { sk: c.sk, n: c.pk.length }); inBaskets.n -= c.pk.length; basketsWaiting -= c.pk.length; },
           done: () => {
             EV['AV-1'] += c.pk.length; scans[gi] += c.pk.length; all.push(...c.pk); L('rvE', { n: c.pk.length });
@@ -469,6 +472,9 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
       } else chunks.forEach(c => { inBaskets.n -= c.pk.length; basketsWaiting -= c.pk.length; toDest(gi, mkUnit(c.pk, c.sk)); });
     });
   }
+  /** Corrige en el momento los paquetes mal clasificados y devuelve el tiempo que lleva. */
+  // shortcut: el paquete sigue en el flujo de su grupo correcto (no se modela el canasto equivocado); alcanza para medir tiempo y cantidad
+  const fixMissorts = (pk: Pkg[]): number => { let m = 0; for (const p of pk) if (p.bad) { p.bad = false; disc.missortFixed++; m += T('missortFix'); } return m; };
   const mkUnit = (pk: Pkg[], sk: string | null): Unit => ({ pk, sk, m3: pk.reduce((a, p) => a + p.vol, 0) / 1000, kg: pk.reduce((a, p) => a + p.kg, 0) });
 
   /* paso 6: destino */
@@ -478,19 +484,33 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     if (G[gi].dest === 'branch') {
       u.pk.forEach(setRc0);
       L('brT', { sk: u.sk, n: u.pk.length });
-      submit('branch', { pk: u.pk.length, base: () => Tn('branchSort', u.pk.length), done: () => {
+      submit('branch', { pk: u.pk.length, base: () => Tn('branchSort', u.pk.length) + fixMissorts(u.pk), done: () => {
         const rc: Record<string, number> = {};
-        u.pk.forEach(p => { routeBuf[p.r].push(p); rc[p.r] = (rc[p.r] ?? 0) + 1; });
-        EV['LM-1'] += u.pk.length; scans[gi] += u.pk.length;
+        let scanned = 0;
+        u.pk.forEach(p => {
+          if (rnd() * 100 < DIS.postmanPct) { searchMissing(); return; }
+          routeBuf[p.r].push(p); rc[p.r] = (rc[p.r] ?? 0) + 1; scanned++;
+        });
+        EV['LM-1'] += scanned; scans[gi] += scanned;
         L('brE', { rc });
       } });
     } else {
+      if (!G[gi].reverify) u.pk.forEach(p => { if (p.bad) disc.missortUndetected++; }); // sin reverificación ni LM-1 nadie lo detecta
       stage[gi].push(u); stageUnits[gi]++; stagePk[gi] += u.pk.length;
       if (stageUnits[gi] > stageMax[gi]) stageMax[gi] = stageUnits[gi];
       L('stage', { g: gi, n: u.pk.length, sk: u.sk });
       tryLoad(gi);
     }
   }
+
+  /** Faltante en LM-1: se busca; si aparece sale de inmediato, si no es un siniestro de bodega. */
+  const searchMissing = (): void => {
+    disc.postman++;
+    submit('branch', { pk: 1, base: () => T('search'), done: () => {
+      if (rnd() * 100 < DIS.postmanFoundPct) disc.postmanFound++; else disc.losses++;
+      finish();
+    } });
+  };
 
   /* paso 7a: camiones de salida por grupo (semanas 1 y 2) */
   const present: OutTruck[][] = G.map(() => []);
@@ -540,7 +560,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     tk.state = 'gone';
     present[tk.gi] = present[tk.gi].filter(t => t !== tk);
     L('otD', { g: tk.gi });
-    if (tk.day < 7 || tk.pkgs > 0) outStats.push({ gi: tk.gi, group: G[tk.gi].name, day: tk.day, arrival: tk.arr, scheduled: tk.sched, departure: now, units: tk.units, pkgs: tk.pkgs, m3: tk.m3, kg: tk.kg, late: Math.max(0, now - tk.sched), leftUnits: stage[tk.gi].length, leftPkgs: stage[tk.gi].reduce((a, u) => a + u.pk.length, 0) });
+    if (tk.day < 7 || tk.pkgs > 0) outStats.push({ gi: tk.gi, group: G[tk.gi].name, day: tk.day, arrival: tk.arr, scheduled: tk.sched, departure: now, units: tk.units, pkgs: tk.pkgs, m3: tk.m3, kg: tk.kg, late: Math.max(0, now - tk.sched), leftPkgs: stage[tk.gi].reduce((a, u) => a + u.pk.length, 0) });
   }
 
   /* paso 7b: carteros retiran cada ruta en cada ventana */
@@ -623,15 +643,15 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
 
   return {
     seed,
-    totals: { pkgs: totPk, boxes: totBoxes, ulds: totUld, loose: totLoose, finished: totPk - unfinished, unfinished, carried, kg: totKg, m3: totL / 1000 },
+    totals: { pkgs: totPk, inbound: totPk - disc.customs, boxes: totBoxes, ulds: totUld, loose: totLoose, finished: totPk - unfinished, unfinished, carried, kg: totKg, m3: totL / 1000 },
     endT: Math.max(endT, now),
     processes, shifts, days,
     outbound: outStats.sort((a, b) => a.arrival - b.arrival || a.gi - b.gi),
     pickups, backlog, groups,
     inbound: trucks.map(t => ({ name: t.name, day: t.day, arrival: t.arr, pkgs: t.total, boxes: t.boxes.length, ulds: t.ulds.length, loose: t.loose.length, unloadEnd: t.unloadEnd, sortEnd: t.sortEnd })),
-    time: stats(times), cpt: cptStat(all), hospital: hosp,
+    time: stats(times), cpt: cptStat(all), hospital: hosp, discrepancies: disc,
     sorter: ST === 'sorter' ? { ...sorterSt, peakPerHour: Math.max(0, ...hourly.inducted) } : null,
     events: EV, hourly: { sorted: hourly.sorted, rc0: hourly.rc0 }, samples: samplesOut, warnings, log,
-    routeTotals: routeTot, swaps,
+    routeTotals: routeTot,
   };
 }

@@ -81,7 +81,7 @@ export interface Shift {
 
 export const TIME_KEYS = [
   'unloadBox', 'unloadUld', 'unloadLoose', 'openBox', 'emptyUld',
-  'sort', 'sortPtl', 'induct', 'swap', 'relabel', 'reverify', 'container', 'branchSort', 'load', 'handover',
+  'sort', 'sortPtl', 'induct', 'swap', 'relabel', 'reverify', 'missortFix', 'container', 'branchSort', 'search', 'load', 'handover',
 ] as const;
 export type TimeKey = typeof TIME_KEYS[number];
 
@@ -117,8 +117,28 @@ export interface Sorter {
   noReadPct: number;
 }
 
+/** Categorías estándar de costos fijos de una bodega. */
+export const COST_CATEGORIES = ['rent', 'utilities', 'security', 'cleaning', 'equipment', 'it', 'insurance', 'overhead'] as const;
+export type CostCategory = typeof COST_CATEGORIES[number];
+
+/** Costo fijo mensual. `sorting` = solo cuenta si la bodega usa ese tipo de sorting ('' = siempre). */
+export interface FixedCost { id: string; category: CostCategory; name: string; usdMonth: number; sorting: SortingType | '' }
+
 export interface Costs {
   overtimeMultiplier: number;
+  /** USD por etiqueta de reetiquetado en hospital. */
+  relabelUsd: number;
+  fixed: FixedCost[];
+}
+
+export interface Discrepancies {
+  /** % de paquetes con WI-2 que no aparecen en el Scan 1 (se reportan solos; no cuentan para volumen ni CPT). */
+  customsPct: number;
+  /** % de errores de sorting por tipo; se detectan en la reverificación (AV-1) o en el sorting de rutas (LM-1). */
+  missortPct: Record<SortingType, number>;
+  /** % de lo que llega a LM-1 que falta; se busca y aparece `postmanFoundPct` % de las veces (el resto es siniestro). */
+  postmanPct: number;
+  postmanFoundPct: number;
 }
 
 export interface Warehouse {
@@ -146,7 +166,12 @@ export interface Warehouse {
   multiskill: { bufferMin: number; changeMin: number; priority: ProcessKey[] };
   /** Tiempo esperado de procesamiento: el CPT de un paquete es el primero que queda al menos esto después de su WI-2. */
   cptLeadMin: number;
+  discrepancies: Discrepancies;
+  /** Corridas con distintas semillas para dar cada KPI con su margen de error. */
+  replicas: number;
 }
+
+export interface Scenario { id: string; name: string; warehouse: Warehouse }
 
 export interface Project {
   format: 'dtwin';
@@ -154,9 +179,10 @@ export interface Project {
   name: string;
   createdAt: string;
   updatedAt: string;
+  /** Bodega que se está editando: es la del escenario activo. */
   warehouse: Warehouse;
-  /** Reservado para el comparador de escenarios (iteración 3). */
-  scenarios: unknown[];
+  scenarios: Scenario[];
+  activeScenario: string;
 }
 
 /** Advertencia de validación: clave i18n + parámetros. */

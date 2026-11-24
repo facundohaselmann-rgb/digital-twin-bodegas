@@ -1,5 +1,7 @@
 import type { CptStat, SimResult } from '../../engine/simulate';
-import { PROCESSES, type Warehouse } from '../../model/types';
+import { COST_CATEGORIES, PROCESSES, type Warehouse } from '../../model/types';
+import { computeCost } from '../../engine/kpis';
+import { CompareTable, KpiTable, fmtKpi, type Comparison, type KpiSummaries } from './ScenariosTab';
 import { fmtDur, fmtHM } from '../../model/time';
 import { dayName, getLang, nf, pct, t } from '../../i18n';
 import { LineChart } from '../components/LineChart';
@@ -17,7 +19,9 @@ const CptCells = ({ c }: { c: CptStat }) => (
   <><td class="n">{nf(c.n)}</td><td class="n"><b>{pct(c.pct)}</b></td><td class={'n ' + (c.late ? 'ko' : '')}>{nf(c.late)}</td><td class="n">{c.noCpt ? nf(c.noCpt) : '—'}</td><td class="n">{fmtDur(c.delayMean)}</td><td class="n">{fmtDur(c.delayP90)}</td></>
 );
 
-export function ResultsTab({ w, r }: { w: Warehouse; r: SimResult }) {
+export function ResultsTab({ w, r, rep, cmp }: { w: Warehouse; r: SimResult; rep: { s: KpiSummaries | null; progress: number | null }; cmp: Comparison | null }) {
+  const cost = computeCost(r, w);
+  const usd = (v: number) => nf(v, 0);
   const T = r.time;
   const paid = r.shifts.reduce((a, s) => a + s.paidMin, 0), busy = r.shifts.reduce((a, s) => a + s.busyMin, 0);
   const ot = r.shifts.reduce((a, s) => a + s.otMin, 0);
@@ -28,9 +32,12 @@ export function ResultsTab({ w, r }: { w: Warehouse; r: SimResult }) {
     <div>
       <div class="cfgbar">
         <button class="btn" onClick={() => exportCSV(w, r)}>{t('res.export')}</button>
+        <button class="btn" onClick={() => window.print()}>{t('res.pdf')}</button>
         <span class="note">{t('res.note', { seed: r.seed, pkgs: nf(r.totals.pkgs), kg: nf(r.totals.kg), m3: nf(r.totals.m3, 1) })}</span>
       </div>
+      <h1 class="print-only">{w.name} — {t('tab.results')}</h1>
       <div class="cards">
+        <div class="stat"><div class="l">{t('res.kpiCost')}</div><div class="v">{nf(cost.perPkg, 3)} <small>USD</small></div><div class="d">{rep.s ? `± ${fmtKpi('costPerPkg', rep.s.costPerPkg.ci)} · ` : ''}{t('res.kpiCostSub', { total: usd(cost.total), inbound: nf(r.totals.inbound) })}</div></div>
         <div class="stat"><div class="l">{t('res.kpiPkgs')}</div><div class="v">{nf(r.totals.pkgs)}</div><div class="d">{t('res.kpiPkgsSub', { boxes: nf(r.totals.boxes), ulds: nf(r.totals.ulds), loose: nf(r.totals.loose) })}</div></div>
         <div class="stat"><div class="l">{t('res.kpiDispatched')}</div><div class="v">{nf(dispatchedWeek)}</div><div class="d">{t('res.kpiCarried', { n: nf(r.totals.pkgs - dispatchedWeek - r.hospital.destroyed) })}</div></div>
         <div class="stat"><div class="l">{t('res.kpiCpt')}</div><div class={'v ' + (r.cpt.pct < 0.95 ? 'ko' : '')}>{pct(r.cpt.pct)}</div><div class="d">{t('res.kpiCptSub', { late: nf(r.cpt.late + r.cpt.noCpt), delay: fmtDur(r.cpt.delayMean) })}</div></div>
@@ -40,8 +47,38 @@ export function ResultsTab({ w, r }: { w: Warehouse; r: SimResult }) {
         <div class="stat"><div class="l">{t('res.kpiOT')}</div><div class="v">{hrs(ot)} h</div><div class="d">×{nf(w.costs.overtimeMultiplier, 1)}</div></div>
         <div class="stat"><div class="l">{t('res.kpiChanges')}</div><div class="v">{nf(changes)}</div><div class="d">{t('res.kpiChangesSub', { h: hrs(changeMin) })}</div></div>
         <div class="stat"><div class="l">{t('res.kpiHospital')}</div><div class="v">{nf(r.hospital.in)}</div><div class="d">{t('res.kpiHospitalSub', { r: nf(r.hospital.relabeled), d: nf(r.hospital.destroyed) })}</div></div>
-        <div class="stat"><div class="l">{t('res.kpiScans')}</div><div class="v">{nf(r.totals.pkgs ? totalScans / r.totals.pkgs : 0, 2)}</div><div class="d">{t('res.kpiPending')}</div></div>
+        <div class="stat"><div class="l">{t('res.kpiScans')}</div><div class="v">{nf(r.totals.pkgs ? totalScans / r.totals.pkgs : 0, 2)}</div></div>
       </div>
+
+      <div class="grid2">
+        <div class="card"><h2>{t('res.replicas')}</h2><div class="sub">{t('res.replicasSub', { n: w.replicas })}</div>
+          {rep.s ? <KpiTable s={rep.s} /> : <div class="hint">{t('res.replicasRunning', { p: pct(rep.progress ?? 0) })}</div>}</div>
+        <div class="card"><h2>{t('res.cost')}</h2><div class="sub">{t('res.costSub')}</div>
+          <div class="tblwrap"><table>
+            <thead><tr><th></th><th class="n">{t('res.usd')}</th><th class="n">{t('res.perPkg')}</th><th class="n">{t('res.share')}</th></tr></thead>
+            <tbody>
+              {([['res.cLabor', cost.labor], ['res.cOT', cost.overtime], ['res.cSupplies', cost.supplies]] as const).map(([l, v]) => <tr><td>{t(l)}</td><td class="n">{usd(v)}</td><td class="n">{nf(v / r.totals.inbound, 3)}</td><td class="n">{pct(v / cost.total)}</td></tr>)}
+              <tr><td class="hint">↳ {t('res.cIdle')}</td><td class="n hint">{usd(cost.idle)}</td><td class="n hint">{nf(cost.idle / r.totals.inbound, 3)}</td><td class="n hint">{pct(cost.idle / cost.total)}</td></tr>
+              <tr><td><b>{t('res.cFixed')}</b></td><td class="n"><b>{usd(cost.fixedTotal)}</b></td><td class="n">{nf(cost.fixedTotal / r.totals.inbound, 3)}</td><td class="n">{pct(cost.fixedTotal / cost.total)}</td></tr>
+              {COST_CATEGORIES.filter(c => cost.fixed[c] > 0).map(c => <tr><td class="hint">↳ {t('cc.' + c)}</td><td class="n">{usd(cost.fixed[c])}</td><td class="n">{nf(cost.fixed[c] / r.totals.inbound, 3)}</td><td class="n">{pct(cost.fixed[c] / cost.total)}</td></tr>)}
+              <tr><td><b>{t('total')}</b></td><td class="n"><b>{usd(cost.total)}</b></td><td class="n"><b>{nf(cost.perPkg, 3)}</b></td><td class="n">100%</td></tr>
+            </tbody>
+          </table></div>
+          <h3 style={{ marginTop: '12px' }}>{t('res.cByProcess')}</h3>
+          <div class="tblwrap"><table><tbody>{PROCESSES.filter(p => cost.byProcess[p] > 0).map(p => <tr><td>{t('p.' + p)}</td><td class="n">{usd(cost.byProcess[p])}</td><td class="n">{nf(cost.byProcess[p] / r.totals.inbound, 3)}</td></tr>)}</tbody></table></div>
+        </div>
+      </div>
+
+      <div class="card mb"><h2>{t('res.disc')}</h2>
+        <div class="cards" style={{ marginBottom: 0 }}>
+          <div class="stat"><div class="l">{t('res.dCustoms')}</div><div class="v">{nf(r.discrepancies.customs)}</div></div>
+          <div class="stat"><div class="l">{t('res.dMissort')}</div><div class="v">{nf(r.discrepancies.missortFixed)}</div>{r.discrepancies.missortUndetected > 0 && <div class="d ko">{nf(r.discrepancies.missortUndetected)} {t('res.dUndetected').toLowerCase()}</div>}</div>
+          <div class="stat"><div class="l">{t('res.dPostman')}</div><div class="v">{nf(r.discrepancies.postman)}</div><div class="d">{nf(r.discrepancies.postmanFound)} {t('res.dFound')}</div></div>
+          <div class="stat"><div class="l">{t('res.dLosses')}</div><div class={'v ' + (r.discrepancies.losses ? 'ko' : '')}>{nf(r.discrepancies.losses)}</div></div>
+        </div>
+      </div>
+
+      {cmp && <div class="card mb"><h2>{t('res.cmp')}</h2><div class="sub">{t('res.cmpSub', { n: cmp.n })}</div><CompareTable cmp={cmp} /></div>}
 
       <div class="card mb"><h2>{t('res.cpt')}</h2><div class="sub">{t('res.cptSub', { lead: fmtDur(w.cptLeadMin) })}</div>
         <div class="tblwrap"><table>

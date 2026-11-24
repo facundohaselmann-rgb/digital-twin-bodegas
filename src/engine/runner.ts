@@ -2,6 +2,7 @@
    navegador no permite crear el worker, corre en el hilo principal. */
 import SimWorker from './worker?worker&inline';
 import { simulate, type SimOptions, type SimResult } from './simulate';
+import { kpis, type Kpis } from './kpis';
 import type { Warehouse } from '../model/types';
 
 type Pending = { resolve: (v: { r: SimResult; ms: number }) => void; reject: (e: Error) => void };
@@ -39,4 +40,31 @@ export function runSimulation(w: Warehouse, opt: SimOptions = {}): Promise<{ r: 
     pending.set(id, { resolve, reject });
     wk.postMessage({ id, w, opt });
   }).then(x => ({ ...x, inWorker: true }), () => direct());
+}
+
+/* Corridas múltiples en un worker propio: una llamada nueva cancela la anterior (el usuario cambió algo). */
+let batchWorker: Worker | null = null;
+let batchSeq = 0;
+let cancelPrev: (() => void) | null = null;
+export const CANCELLED = 'cancelled';
+export function runBatch(ws: Warehouse[], n: number, onProgress?: (p: number) => void): Promise<Kpis[][]> {
+  batchWorker?.terminate();
+  batchWorker = null;
+  cancelPrev?.();
+  const id = ++batchSeq;
+  const direct = () => ws.map(w => Array.from({ length: n }, (_, k) => kpis(simulate(w, { seed: w.seed + k, log: false }), w)));
+  if (workerFailed) return Promise.resolve().then(direct);
+  return new Promise<Kpis[][]>((resolve, reject) => {
+    cancelPrev = () => reject(new Error(CANCELLED));
+    try { batchWorker = new SimWorker(); } catch { resolve(direct()); return; }
+    const wk = batchWorker;
+    wk.onmessage = (e: MessageEvent<{ id: number; progress?: number; batch?: Kpis[][]; error?: string }>) => {
+      if (e.data.id !== id) return;
+      if (e.data.progress != null) onProgress?.(e.data.progress);
+      else if (e.data.batch) { resolve(e.data.batch); wk.terminate(); if (batchWorker === wk) batchWorker = null; }
+      else reject(new Error(e.data.error ?? 'error'));
+    };
+    wk.onerror = () => reject(new Error('worker'));
+    wk.postMessage({ id, kind: 'batch', ws, n });
+  });
 }

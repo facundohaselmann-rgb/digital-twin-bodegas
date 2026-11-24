@@ -1,8 +1,8 @@
 /* Archivos de proyecto (.dtwin). En Chrome/Edge se guardan directo en la
    carpeta elegida (por ejemplo, la carpeta de Google Drive para escritorio)
    con la File System Access API; en otros navegadores se descargan. */
-import type { Project } from '../model/types';
-import { jamaicaWarehouse } from '../model/defaults';
+import type { Project, Scenario, Warehouse } from '../model/types';
+import { defaultScenarios, jamaicaWarehouse, uid } from '../model/defaults';
 import { normalize } from '../model/normalize';
 
 /* Tipos mínimos de la File System Access API (no incluidos en lib.dom de TS). */
@@ -23,8 +23,15 @@ export function parseProject(text: string): Project {
   if (!o || o.format !== 'dtwin' || !o.warehouse) throw new Error('invalid');
   if (o.version !== 2) throw new Error('version');
   // completa lo que falte con valores por defecto y valida; si no se puede, el archivo se rechaza
-  o.warehouse = { ...jamaicaWarehouse(), ...o.warehouse };
-  normalize(o.warehouse);
+  const fix = (w: unknown): Warehouse => { const x = { ...jamaicaWarehouse(), ...(w as object) } as Warehouse; normalize(x); return x; };
+  o.warehouse = fix(o.warehouse);
+  // proyectos sin escenarios (iteraciones 1 y 2) arrancan con los 3 escenarios por defecto
+  o.scenarios = Array.isArray(o.scenarios) && o.scenarios.length
+    ? o.scenarios.map((s: Scenario) => ({ id: s.id || uid('e'), name: String(s.name || 'Escenario'), warehouse: fix(s.warehouse) }))
+    : defaultScenarios(o.warehouse);
+  const act = o.scenarios.find((s: Scenario) => s.id === o.activeScenario) ?? o.scenarios[0];
+  o.activeScenario = act.id;
+  act.warehouse = o.warehouse; // la bodega que se edita es la del escenario activo
   return o as Project;
 }
 

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Deque, percentile } from '../src/engine/core';
 import { nextProcess, simulate } from '../src/engine/simulate';
-import { jamaicaWarehouse } from '../src/model/defaults';
+import { jamaicaWarehouse, modelWarehouse } from '../src/model/defaults';
+import { computeCost, kpis, summarize } from '../src/engine/kpis';
 import { normalize } from '../src/model/normalize';
 import { WEEK } from '../src/model/time';
 
@@ -33,8 +34,9 @@ describe('simulación semanal — plantilla Jamaica', () => {
     expect(r.events['WI-2']).toBe(r.totals.pkgs);
     // los destruidos en el hospital no llegan a canasto ni a RC-0
     expect(r.hospital.in).toBeGreaterThan(0);
-    expect(r.events['WI-3 + WI-4']).toBe(r.totals.pkgs - r.hospital.destroyed);
-    expect(r.events['RC-0']).toBe(r.totals.pkgs - r.hospital.destroyed);
+    const gone = r.hospital.destroyed + r.discrepancies.customs; // destruidos y faltantes de aduana no llegan a RC-0
+    expect(r.events['WI-3 + WI-4']).toBe(r.totals.pkgs - gone);
+    expect(r.events['RC-0']).toBe(r.totals.pkgs - gone);
   });
 
   it('los paquetes con reverificación tienen 2 escaneos', () => {
@@ -177,7 +179,7 @@ describe('iteración 2', () => {
     expect(r.hospital.in / r.totals.pkgs).toBeCloseTo(0.2, 1);
     expect(r.hospital.relabeled / r.hospital.in).toBeCloseTo(0.75, 1);
     expect(r.hospital.relabeled + r.hospital.destroyed).toBe(r.hospital.in);
-    expect(r.events['RC-0'] + r.hospital.destroyed).toBe(r.totals.pkgs);
+    expect(r.events['RC-0'] + r.hospital.destroyed + r.discrepancies.customs).toBe(r.totals.pkgs);
     expect(r.totals.unfinished).toBe(0);
   });
 
@@ -221,6 +223,65 @@ describe('iteración 2', () => {
     const tue = r.pickups.filter(p => p.day === 1 && p.pkgs > 0).map(p => Math.floor((p.time % 1440) / 60));
     expect(tue.some(h => h < 12)).toBe(true);
     expect(tue.some(h => h >= 14)).toBe(true);
+  });
+});
+
+describe('iteración 3', () => {
+  it('faltantes de aduana: no se procesan ni cuentan como entrantes', () => {
+    const w = base(); w.discrepancies.customsPct = 5;
+    const r = simulate(w, { log: false });
+    expect(r.discrepancies.customs / r.totals.pkgs).toBeCloseTo(0.05, 1);
+    expect(r.totals.inbound).toBe(r.totals.pkgs - r.discrepancies.customs);
+    expect(r.events['RC-0'] + r.hospital.destroyed + r.discrepancies.customs).toBe(r.totals.pkgs);
+    expect(r.totals.unfinished).toBe(0);
+  });
+
+  it('errores de sorting: se corrigen en AV-1 o LM-1 y suman tiempo', () => {
+    const a = base(), b = base();
+    a.discrepancies.missortPct.manual = 0; b.discrepancies.missortPct.manual = 10;
+    const ra = simulate(a, { log: false }), rb = simulate(b, { log: false });
+    expect(rb.discrepancies.missortFixed / rb.events['WI-3 + WI-4']).toBeCloseTo(0.1, 1);
+    expect(rb.discrepancies.missortUndetected).toBe(0); // en Jamaica todos los grupos pasan por AV-1 o LM-1
+    const rv = (r: typeof ra) => r.processes.find(p => p.key === 'reverify')!.busyMin;
+    expect(rv(rb)).toBeGreaterThan(rv(ra));
+  });
+
+  it('faltantes de cartero: ~50 % aparece y el resto es siniestro', () => {
+    const w = base(); w.discrepancies.postmanPct = 10;
+    const r = simulate(w, { log: false });
+    const branch = r.groups.filter(g => g.dest === 'branch').reduce((x, g) => x + g.pkgs, 0);
+    expect(r.discrepancies.postman / branch).toBeCloseTo(0.1, 1);
+    expect(r.discrepancies.postmanFound / r.discrepancies.postman).toBeCloseTo(0.5, 1);
+    expect(r.discrepancies.postmanFound + r.discrepancies.losses).toBe(r.discrepancies.postman);
+    expect(r.totals.unfinished).toBe(0);
+  });
+
+  it('costo: el total es la suma de sus partes y se reparte sobre los entrantes', () => {
+    const w = base();
+    const r = simulate(w, { log: false }), c = computeCost(r, w);
+    expect(c.total).toBeCloseTo(c.labor + c.overtime + c.fixedTotal + c.supplies, 6);
+    expect(c.perPkg * r.totals.inbound).toBeCloseTo(c.total, 6);
+    // con sorting manual no cuentan los costos del sorter ni del Pick to Light
+    const expected = w.costs.fixed.filter(f => !f.sorting).reduce((x, f) => x + f.usdMonth, 0) * 12 / 52;
+    expect(c.fixedTotal).toBeCloseTo(expected, 6);
+  });
+
+  it('corridas múltiples: el margen se achica con más corridas', () => {
+    const w = base();
+    const runs = Array.from({ length: 20 }, (_, k) => kpis(simulate(w, { seed: 1 + k, log: false }), w).timeMean);
+    const s5 = summarize(runs.slice(0, 5)), s20 = summarize(runs);
+    expect(s20.ci).toBeLessThan(s5.ci);
+    expect(s20.mean).toBeGreaterThanOrEqual(s20.min);
+    expect(s20.mean).toBeLessThanOrEqual(s20.max);
+  });
+
+  it('bodega Modelo (Pick to Light) es válida y se procesa completa', () => {
+    const w = modelWarehouse();
+    expect(normalize(w).filter(x => x.key !== 'w.staffGtStations')).toEqual([]);
+    expect(w.sorting.type).toBe('ptl');
+    const r = simulate(w, { log: false });
+    expect(r.totals.pkgs).toBeGreaterThan(25000);
+    expect(r.totals.unfinished).toBe(0);
   });
 });
 

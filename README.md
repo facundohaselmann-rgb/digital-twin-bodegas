@@ -30,6 +30,12 @@ Cada cambio se vuelve a simular al instante. El idioma (ES/EN) se cambia arriba 
 | Personal multiskill | Cada persona arranca en su puesto. Cuando se queda sin trabajo espera un tiempo (10 min por defecto) por si vuelve a haber trabajo en su puesto; si no, pasa al siguiente proceso con trabajo pendiente (la carga va primero si hay un camión esperando). Vuelve a su puesto cuando tiene trabajo, sin esperar. Cada cambio cuesta unos minutos (configurable) |
 | CPT | Por grupo de sorting: la salida del camión (Stage out) o el retiro del cartero de cada ruta (Branch). El CPT de un paquete es el primero que queda al menos el *tiempo esperado de procesamiento* después de su WI-2. En Branch sin reverificación, el RC-0 ocurre cuando se llena el canasto |
 | Carteros | Ventanas de retiro configurables (por defecto, mañana y tarde) |
+| Discrepancias | Faltantes de aduana (WI-2 sin WI-3: se reportan solos, no cuentan para volumen ni CPT), errores de sorting (se corrigen en el momento en AV-1 o LM-1) y faltantes de cartero en LM-1 (se buscan; si aparecen salen de inmediato, si no son siniestros de bodega) |
+| Costos (USD) | Mano de obra por horas pagadas y costo hora de cada turno, horas extra con multiplicador, costos fijos mensuales por categoría (alquiler, servicios, seguridad, limpieza, equipos, sistemas, seguros, supervisión) prorrateados a la semana, insumos. **Costo por paquete entrante** |
+| Corridas múltiples | 20 corridas con distintas semillas por defecto; cada KPI con media ± margen al 95 % |
+| Escenarios | Cada proyecto trae 3 escenarios (base, +20 % volumen y otro tipo de sorting). Se editan, duplican y comparan lado a lado |
+| Reporte | Exportar PDF con la impresión de Chrome ("Guardar como PDF") y CSV |
+| Plantillas | Jamaica (sorting manual con PDA), **Modelo** (genérica, Pick to Light y todas las funciones) y bodega en blanco |
 | Resultados | CPT a tiempo por grupo, tiempo WI-2 → RC-0 (media, P90, P95, P98), utilización y cambios de puesto por turno, hospital, sorter, pendiente al cierre de cada turno, camiones de entrada y salida, eventos de Tracking, gráficos semanales, exportación a CSV |
 
 Los valores por defecto (volúmenes, tiempos, dotación, costos) son **supuestos estándar editables**. La estructura de grupos y servicios viene de la operación de Jamaica.
@@ -69,6 +75,5 @@ Los CSV con datos de paquetes **no se suben a este repositorio** (están en `.gi
 
 ## Roadmap
 
-- **Iteración 3:** discrepancias, costo por paquete (USD), corridas múltiples, comparador de escenarios, exportación a PDF.
 - **Iteración 4 (MVP):** layout sobre el plano PDF con escala y distancias.
 - **Siguientes:** retornos (DV-1, LM-4, RT-1, RT-2), editor de layout completo, calibración con históricos (CSV), optimización de dotación.

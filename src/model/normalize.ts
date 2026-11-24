@@ -1,5 +1,5 @@
-import { PROCESSES, TIME_KEYS, type Days, type ProcessKey, type Routes, type Warehouse, type Warning, type PackageProfile } from './types';
-import { DEFAULT_SORTER, DEFAULT_TIMES, MON_SAT, uid } from './defaults';
+import { COST_CATEGORIES, PROCESSES, TIME_KEYS, type Days, type ProcessKey, type Routes, type Warehouse, type Warning, type PackageProfile } from './types';
+import { DEFAULT_DISCREPANCIES, DEFAULT_SORTER, DEFAULT_TIMES, MON_SAT, defaultFixedCosts, uid } from './defaults';
 import { hm } from './time';
 
 const num = (v: unknown, d: number, lo?: number, hi?: number): number => {
@@ -104,7 +104,10 @@ export function normalize(w: Warehouse): Warning[] {
   c.stations.branch = int(c.stations.branch, 2, 1, 500);
   w.outboundLoadWindowMin = num(w.outboundLoadWindowMin, 30, 0, 1440);
   w.volumePct = num(w.volumePct, 100, 1, 1000);
-  w.costs = { overtimeMultiplier: num(w.costs?.overtimeMultiplier, 1.5, 1, 5) };
+  const fixed = Array.isArray(w.costs?.fixed) ? w.costs.fixed : defaultFixedCosts();
+  w.costs = { overtimeMultiplier: num(w.costs?.overtimeMultiplier, 1.5, 1, 5), relabelUsd: num(w.costs?.relabelUsd, 0.05, 0, 1000),
+    fixed: fixed.map(f => ({ id: f.id || uid('c'), category: (COST_CATEGORIES as readonly string[]).includes(f.category) ? f.category : 'overhead',
+      name: String(f.name ?? ''), usdMonth: num(f.usdMonth, 0, 0, 1e9), sorting: f.sorting === 'manual' || f.sorting === 'ptl' || f.sorting === 'sorter' ? f.sorting : '' })) };
   const so = w.sorting ?? { type: 'manual', sorter: { ...DEFAULT_SORTER } };
   const sr = { ...DEFAULT_SORTER, ...so.sorter };
   w.sorting = { type: so.type === 'ptl' || so.type === 'sorter' ? so.type : 'manual', sorter: {
@@ -115,6 +118,10 @@ export function normalize(w: Warehouse): Warning[] {
   const pr = (w.multiskill?.priority ?? []).filter(p => (PROCESSES as readonly string[]).includes(p));
   w.multiskill = { bufferMin: num(w.multiskill?.bufferMin, 10, 0, 240), changeMin: num(w.multiskill?.changeMin, 5, 0, 240), priority: [...new Set([...pr, ...PROCESSES])] };
   w.cptLeadMin = num(w.cptLeadMin, 240, 0, 7 * 1440);
+  const d = w.discrepancies ?? DEFAULT_DISCREPANCIES, mp = d.missortPct ?? DEFAULT_DISCREPANCIES.missortPct;
+  w.discrepancies = { customsPct: num(d.customsPct, 0, 0, 100), postmanPct: num(d.postmanPct, 0, 0, 100), postmanFoundPct: num(d.postmanFoundPct, 50, 0, 100),
+    missortPct: { manual: num(mp.manual, 0, 0, 100), ptl: num(mp.ptl, 0, 0, 100), sorter: num(mp.sorter, 0, 0, 100) } };
+  w.replicas = int(w.replicas, 20, 1, 100);
 
   /* turnos */
   w.shifts = Array.isArray(w.shifts) ? w.shifts : [];
