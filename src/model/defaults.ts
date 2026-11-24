@@ -1,4 +1,4 @@
-import type { Days, ProcessKey, Project, SortingGroup, Warehouse, Shift, InboundTruck, Tri, TimeKey } from './types';
+import { PROCESSES, type Days, type ProcessKey, type Project, type SortingGroup, type Warehouse, type Shift, type InboundTruck, type Tri, type TimeKey, type Sorter } from './types';
 
 let counter = 0;
 export function uid(prefix = 'id'): string {
@@ -7,8 +7,6 @@ export function uid(prefix = 'id'): string {
 }
 
 export const MON_SAT: Days = [true, true, true, true, true, true, false];
-export const ALL_DAYS: Days = [true, true, true, true, true, true, true];
-export const NO_DAYS: Days = [false, false, false, false, false, false, false];
 
 export const DEFAULT_TIMES: Record<TimeKey, Tri> = {
   unloadBox: { min: 0.3, mode: 0.5, max: 0.8 },     // min por caja
@@ -16,8 +14,11 @@ export const DEFAULT_TIMES: Record<TimeKey, Tri> = {
   unloadLoose: { min: 3, mode: 4, max: 7 },         // s por paquete suelto
   openBox: { min: 1, mode: 1.5, max: 2.5 },         // min por caja
   emptyUld: { min: 6, mode: 8, max: 12 },           // min por ULD
-  sort: { min: 6, mode: 8, max: 12 },               // s por paquete
+  sort: { min: 4.5, mode: 6, max: 9 },              // s por paquete, manual con PDA (~550 paq/h)
+  sortPtl: { min: 3.5, mode: 4.5, max: 6 },         // s por paquete, Pick to Light (~770 paq/h)
+  induct: { min: 2.5, mode: 3, max: 3.6 },          // s por paquete, inducción al sorter (~1.200 paq/h)
   swap: { min: 0.3, mode: 0.5, max: 1 },            // min por canasto lleno
+  relabel: { min: 2, mode: 3, max: 5 },             // min por paquete en hospital
   reverify: { min: 4, mode: 5, max: 7 },            // s por paquete
   container: { min: 1.5, mode: 2, max: 3 },         // min por contenedor
   branchSort: { min: 5, mode: 6, max: 9 },          // s por paquete
@@ -25,8 +26,11 @@ export const DEFAULT_TIMES: Record<TimeKey, Tri> = {
   handover: { min: 2, mode: 3, max: 5 },            // min por ruta
 };
 
+/** Valores de catálogo (supuestos editables). */
+export const DEFAULT_SORTER: Sorter = { inductionPoints: 2, machinePerHour: 3000, chutes: 24, maxKg: 30, maxLengthCm: 80, maxWidthCm: 60, maxHeightCm: 60, noReadPct: 2 };
+
 function staff(o: Partial<Record<ProcessKey, number>>): Record<ProcessKey, number> {
-  return { unload: 0, decon: 0, sort: 0, reverify: 0, branch: 0, load: 0, ...o };
+  return { unload: 0, decon: 0, sort: 0, hospital: 0, reverify: 0, branch: 0, load: 0, ...o };
 }
 
 function group(name: string, share: number, reverify: boolean, dest: 'stageout' | 'branch', truck: string | null,
@@ -71,7 +75,10 @@ export function jamaicaWarehouse(): Warehouse {
       group('Mandeville Branch', 15, true, 'stageout', '14:00', [['Mandeville', true], ['Manchester', false], ['St. Elizabeth', true]]),
       group('Kingston Branch', 40, false, 'branch', null, [['Kingston', true], ['Portmore', true], ['Spanish Town', true]]),
     ],
-    routes: { count: 10, first: '14:00', everyMin: 10, days: [...MON_SAT] as Days },
+    routes: { count: 10, windows: [
+      { id: uid('v'), name: 'Mañana', days: [...MON_SAT] as Days, first: '08:00', everyMin: 10 },
+      { id: uid('v'), name: 'Tarde', days: [...MON_SAT] as Days, first: '14:00', everyMin: 10 },
+    ] },
     times: structuredClone(DEFAULT_TIMES),
     capacity: {
       basketPkgs: 60, basketLiters: 500, containerPkgs: 150, containerLiters: 1500,
@@ -82,6 +89,10 @@ export function jamaicaWarehouse(): Warehouse {
     outboundLoadWindowMin: 30,
     volumePct: 100,
     costs: { overtimeMultiplier: 1.5 },
+    sorting: { type: 'manual', sorter: structuredClone(DEFAULT_SORTER) },
+    hospital: { exceptionPct: 1.5, relabelPct: 75 },
+    multiskill: { changeMin: 5, priority: [...PROCESSES] },
+    cptLeadMin: 240,
   };
 }
 

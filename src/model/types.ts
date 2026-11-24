@@ -58,7 +58,7 @@ export interface SortingGroup {
   profile: PackageProfile | null;
 }
 
-export const PROCESSES = ['unload', 'decon', 'sort', 'reverify', 'branch', 'load'] as const;
+export const PROCESSES = ['unload', 'decon', 'sort', 'hospital', 'reverify', 'branch', 'load'] as const;
 export type ProcessKey = typeof PROCESSES[number];
 
 export interface ShiftBreak { start: string; minutes: number }
@@ -81,7 +81,7 @@ export interface Shift {
 
 export const TIME_KEYS = [
   'unloadBox', 'unloadUld', 'unloadLoose', 'openBox', 'emptyUld',
-  'sort', 'swap', 'reverify', 'container', 'branchSort', 'load', 'handover',
+  'sort', 'sortPtl', 'induct', 'swap', 'relabel', 'reverify', 'container', 'branchSort', 'load', 'handover',
 ] as const;
 export type TimeKey = typeof TIME_KEYS[number];
 
@@ -96,11 +96,25 @@ export interface Capacity {
   stations: { sort: number; reverify: number; branch: number };
 }
 
+/** Ventana de retiro: todos los carteros pasan uno tras otro desde `first`. */
+export interface PickupWindow { id: string; name: string; days: Days; first: string; everyMin: number }
+
 export interface Routes {
   count: number;
-  first: string;
-  everyMin: number;
-  days: Days;
+  windows: PickupWindow[];
+}
+
+export type SortingType = 'manual' | 'ptl' | 'sorter';
+
+export interface Sorter {
+  inductionPoints: number;
+  machinePerHour: number;
+  chutes: number;
+  maxKg: number;
+  maxLengthCm: number;
+  maxWidthCm: number;
+  maxHeightCm: number;
+  noReadPct: number;
 }
 
 export interface Costs {
@@ -124,6 +138,14 @@ export interface Warehouse {
   /** Multiplicador de volumen de llegadas (100 = programa tal cual). */
   volumePct: number;
   costs: Costs;
+  /** Sorting de entrada (WI-3); el de rutas y la reverificación son siempre manuales con PDA. */
+  sorting: { type: SortingType; sorter: Sorter };
+  /** % de paquetes con excepción en el Scan 1 y % de esos que se reetiquetan (el resto se destruye). */
+  hospital: { exceptionPct: number; relabelPct: number };
+  /** Minutos para cambiar de puesto y orden en que se ayuda a otros procesos (la carga va primero si hay camión). */
+  multiskill: { changeMin: number; priority: ProcessKey[] };
+  /** Tiempo esperado de procesamiento: el CPT de un paquete es el primero que queda al menos esto después de su WI-2. */
+  cptLeadMin: number;
 }
 
 export interface Project {

@@ -22,6 +22,15 @@ describe('archivo de proyecto', () => {
     p.warehouse.capacity = null;
     expect(() => parseProject(JSON.stringify(p))).toThrow();
   });
+  it('las rutas de la iteración 1 pasan a una ventana de carteros', () => {
+    const w = jamaicaWarehouse() as unknown as { routes: unknown };
+    w.routes = { count: 7, first: '15:30', everyMin: 5, days: [true, false, false, false, false, false, false] };
+    const x = w as unknown as Parameters<typeof normalize>[0];
+    normalize(x);
+    expect(x.routes.count).toBe(7);
+    expect(x.routes.windows).toHaveLength(1);
+    expect(x.routes.windows[0].first).toBe('15:30');
+  });
   it('la bodega en blanco es válida y simulable', () => {
     const w = blankWarehouse();
     const warnings = normalize(w);

@@ -14,7 +14,7 @@ Funciona **100 % local y sin conexión**: es un único archivo HTML que se abre 
 
 Cada cambio se vuelve a simular al instante. El idioma (ES/EN) se cambia arriba a la derecha.
 
-## Qué modela (iteración 1)
+## Qué modela
 
 | Área | Detalle |
 |---|---|
@@ -25,7 +25,12 @@ Cada cambio se vuelve a simular al instante. El idioma (ES/EN) se cambia arriba 
 | Perfil de paquete | Peso y medidas medios con variación, por bodega o por grupo de sorting |
 | Capacidades | Canastos, contenedores y camiones de salida se llenan por cantidad, volumen y peso. Estaciones de Scan 1, Scan 2 y sorting de rutas |
 | Procesos | Descarga → desconsolidación → sorting (Scan 1) → cierre de canastos por camión → reverificación (Scan 2) y contenedores → Stage out → carga en camiones de salida (RC-0) / Branch → rutas → carteros |
-| Resultados | Tiempo WI-2 → RC-0 (media, P90, P95, P98), utilización por proceso y turno, pendiente al cierre de cada turno, camiones de entrada y salida, eventos de Tracking, gráficos semanales, exportación a CSV |
+| Sorting de entrada | Uno por bodega: **manual con PDA**, **Pick to Light** o **sorter automático** (puntos de inducción, capacidad de la máquina, bocas, límites de peso y medidas, no leídos). Los paquetes que no entran en el sorter y las bocas compartidas se clasifican a mano. El sorting de rutas y la reverificación son siempre manuales con PDA |
+| Hospital | % de excepciones en Scan 1 (más los no leídos del sorter). Un % se reetiqueta y vuelve a sorting; el resto va a destrucción |
+| Personal multiskill | Cada persona arranca en su puesto. Cuando se queda sin trabajo pasa al siguiente proceso con trabajo pendiente (la carga va primero si hay un camión esperando) y vuelve a su puesto cuando tiene trabajo. Cada cambio cuesta unos minutos (configurable) |
+| CPT | Por grupo de sorting: la salida del camión (Stage out) o el retiro del cartero de cada ruta (Branch). El CPT de un paquete es el primero que queda al menos el *tiempo esperado de procesamiento* después de su WI-2. En Branch sin reverificación, el RC-0 ocurre cuando se llena el canasto |
+| Carteros | Ventanas de retiro configurables (por defecto, mañana y tarde) |
+| Resultados | CPT a tiempo por grupo, tiempo WI-2 → RC-0 (media, P90, P95, P98), utilización y cambios de puesto por turno, hospital, sorter, pendiente al cierre de cada turno, camiones de entrada y salida, eventos de Tracking, gráficos semanales, exportación a CSV |
 
 Los valores por defecto (volúmenes, tiempos, dotación, costos) son **supuestos estándar editables**. La estructura de grupos y servicios viene de la operación de Jamaica.
 
@@ -41,7 +46,7 @@ npm run build      # genera dist/index.html (archivo único)
 npm run e2e        # prueba de humo en Chromium (requiere Playwright)
 ```
 
-Para publicar una versión, se copia `dist/index.html` a `releases/digital-twin-bodegas.html`.
+Para publicar una versión, se copia `dist/index.html` a `releases/digital-twin-bodegas.html`. El CI (GitHub Actions) corre los tests y verifica que esa copia esté al día.
 
 ### Estructura
 
@@ -64,7 +69,6 @@ Los CSV con datos de paquetes **no se suben a este repositorio** (están en `.gi
 
 ## Roadmap
 
-- **Iteración 2:** plantilla de procesos configurable, 3 tipos de sorting (manual, Pick to Light, sorter automático con bocas), personal multiskill, CPT por grupo.
-- **Iteración 3:** hospital de paquetes, discrepancias, costo por paquete (USD), corridas múltiples, comparador de escenarios, exportación a PDF.
+- **Iteración 3:** discrepancias, costo por paquete (USD), corridas múltiples, comparador de escenarios, exportación a PDF.
 - **Iteración 4 (MVP):** layout sobre el plano PDF con escala y distancias.
 - **Siguientes:** retornos (DV-1, LM-4, RT-1, RT-2), editor de layout completo, calibración con históricos (CSV), optimización de dotación.

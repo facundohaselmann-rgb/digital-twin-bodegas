@@ -8,23 +8,23 @@ import { PROCESSES, type ProcessKey, type TimeKey, type Warehouse, type Warning 
 import { DAY, WEEK, hm } from '../model/time';
 import { Deque, EventHeap, mulberry32, percentile, triangular } from './core';
 
-export const SECOND_KEYS: ReadonlySet<TimeKey> = new Set<TimeKey>(['unloadLoose', 'sort', 'reverify', 'branchSort']);
+export const SECOND_KEYS: ReadonlySet<TimeKey> = new Set<TimeKey>(['unloadLoose', 'sort', 'sortPtl', 'induct', 'reverify', 'branchSort']);
 const HORIZON = 2 * WEEK;
-const ORDER: Record<ProcessKey, number> = { unload: 0, decon: 1, sort: 2, reverify: 3, branch: 4, load: 5 };
 
 export interface SimOptions { seed?: number; log?: boolean; volume?: number }
 export type LogEv = { t: number; e: string; [k: string]: number | string | Record<string, number> | null };
 
-export interface Wip { unload: number; decon: number; sort: number; baskets: number; reverify: number; branch: number; stage: number; routes: number }
+export interface Wip { unload: number; decon: number; sort: number; hospital: number; baskets: number; reverify: number; branch: number; stage: number; routes: number }
 export interface Sample { t: number; busy: Record<ProcessKey, number>; duty: Record<ProcessKey, number>; wip: Wip }
-export interface ProcessStat { key: ProcessKey; jobs: number; busyMin: number; paidMin: number; otMin: number; util: number; waitAvg: number; maxQueuePkgs: number; first: number | null; lastEnd: number | null }
-export interface ShiftStat { shiftId: string; name: string; night: boolean; process: ProcessKey; workers: number; paidMin: number; busyMin: number; otMin: number; util: number }
+export interface ProcessStat { key: ProcessKey; jobs: number; busyMin: number; waitAvg: number; maxQueuePkgs: number }
+export interface ShiftStat { shiftId: string; name: string; night: boolean; workers: number; paidMin: number; busyMin: number; otMin: number; util: number; changes: number; changeMin: number }
 export interface DayStat { day: number; arrived: number; rc0: number; finished: number; paidMin: number; busyMin: number; otMin: number; lastActivity: number | null }
 export interface OutboundStat { gi: number; group: string; day: number; arrival: number; scheduled: number; departure: number; units: number; pkgs: number; m3: number; kg: number; late: number; leftUnits: number; leftPkgs: number }
 export interface PickupStat { route: number; day: number; time: number; pkgs: number }
 export interface BacklogStat { shift: string; day: number; time: number; wip: Wip; total: number }
 export interface TimeStats { n: number; mean: number; p90: number; p95: number; p98: number }
-export interface GroupStat { name: string; dest: string; reverify: boolean; pkgs: number; baskets: number; containers: number; scans: number; spp: number; stageMax: number; time: TimeStats }
+export interface CptStat { n: number; onTime: number; late: number; noCpt: number; pct: number; delayMean: number; delayP90: number }
+export interface GroupStat { name: string; dest: string; reverify: boolean; pkgs: number; baskets: number; containers: number; scans: number; spp: number; stageMax: number; time: TimeStats; cpt: CptStat }
 export interface InboundStat { name: string; day: number; arrival: number; pkgs: number; boxes: number; ulds: number; loose: number; unloadEnd: number | null; sortEnd: number | null }
 
 export interface SimResult {
@@ -40,24 +40,28 @@ export interface SimResult {
   inbound: InboundStat[];
   groups: GroupStat[];
   time: TimeStats;
+  cpt: CptStat;
+  hospital: { in: number; relabeled: number; destroyed: number };
+  sorter: { inducted: number; nonConveyable: number; sharedChute: number; noRead: number; peakPerHour: number } | null;
   events: Record<string, number>;
   hourly: { sorted: number[]; rc0: number[] };
   samples: Sample[];
   warnings: Warning[];
   log: LogEv[];
-  /** Totales por grupo y por ruta para la animación. */
-  groupTotals: number[];
+  /** Paquetes por ruta, para escalar la animación. */
   routeTotals: number[];
   swaps: number;
 }
 
 /* ------------------------------------------------------------------ */
-interface Pkg { ti: number; g: number; s: number; r: number; vol: number; kg: number; wi2: number; rc0: number; bi: number }
+interface Pkg { ti: number; g: number; s: number; r: number; vol: number; kg: number; wi2: number; bi: number; nc: boolean; relabeled: boolean }
 interface Unit { pk: Pkg[]; sk: string | null; m3: number; kg: number }
-interface Job { pk: number; base: () => number; start?: () => void; done: () => void; cancelled?: boolean; started?: boolean; eq?: number }
-interface Worker { shift: number; proc: ProcessKey; state: 0 | 1 | 2 | 3; inWin: boolean; brk: boolean; ot: boolean; otStart: number; otEnd: number; prod: number; otMin: number }
-interface Pool { key: ProcessKey; q: Deque<Job>; qPk: number; idle: Worker[]; stations: number; busy: number; duty: number; busyMin: number; busyW1: number; jobs: number; waitSum: number; maxQPk: number; first: number | null; lastEnd: number | null }
-interface OutTruck { gi: number; day: number; arr: number; sched: number; dep: number; state: 'here' | 'closing' | 'gone'; m3: number; kg: number; units: number; pkgs: number; inflight: number; jobs: Job[] }
+interface Job { pk: number; base: () => number; start?: () => void; done: () => void; cancelled?: boolean; started?: boolean; eq?: number; free?: boolean }
+/** state: 0 fuera de turno, 1 libre, 2 trabajando, 3 en pausa, 4 cambiando de puesto */
+interface Worker { shift: number; home: ProcessKey; proc: ProcessKey; state: 0 | 1 | 2 | 3 | 4; inWin: boolean; brk: boolean; ot: boolean; otStart: number; otEnd: number; prod: number; otMin: number; busyW1: number; changes: number; changeMin: number }
+/** q: tareas que necesitan estación; free: tareas sin estación (p. ej. sorting manual al lado del sorter). */
+interface Pool { key: ProcessKey; q: Deque<Job>; free: Deque<Job>; qPk: number; idle: Worker[]; stations: number; stBusy: number; busy: number; duty: number; incoming: number; busyW1: number; jobs: number; waitSum: number; maxQPk: number }
+interface OutTruck { gi: number; day: number; arr: number; sched: number; state: 'here' | 'closing' | 'gone'; m3: number; kg: number; units: number; pkgs: number; inflight: number; jobs: Job[] }
 
 export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
   const seed = opt.seed ?? W.seed;
@@ -69,6 +73,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
   const cap = W.capacity;
   const G = W.groups;
   const R = W.routes.count;
+  const ST = W.sorting.type, SR = W.sorting.sorter, HOS = W.hospital, CHANGE = W.multiskill.changeMin;
   const warnings: Warning[] = [];
   const log: LogEv[] = [];
   let now = 0;
@@ -80,18 +85,17 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
   /* ------------------------- recursos ------------------------- */
   const pools = {} as Record<ProcessKey, Pool>;
   PROCESSES.forEach(p => {
-    const st = p === 'sort' ? cap.stations.sort : p === 'reverify' ? cap.stations.reverify : p === 'branch' ? cap.stations.branch : Infinity;
-    pools[p] = { key: p, q: new Deque<Job>(), qPk: 0, idle: [], stations: st, busy: 0, duty: 0, busyMin: 0, busyW1: 0, jobs: 0, waitSum: 0, maxQPk: 0, first: null, lastEnd: null };
+    const st = p === 'sort' ? (ST === 'sorter' ? SR.inductionPoints : cap.stations.sort) : p === 'reverify' ? cap.stations.reverify : p === 'branch' ? cap.stations.branch : Infinity;
+    pools[p] = { key: p, q: new Deque<Job>(), free: new Deque<Job>(), qPk: 0, idle: [], stations: st, stBusy: 0, busy: 0, duty: 0, incoming: 0, busyW1: 0, jobs: 0, waitSum: 0, maxQPk: 0 };
   });
-  const logPC = (p: ProcessKey): void => L('pc', { p, b: pools[p].busy, d: pools[p].duty });
   const workers: Worker[] = [];
   const shiftWorkers: Worker[][] = W.shifts.map((s, si) => {
     const arr: Worker[] = [];
-    PROCESSES.forEach(p => { for (let i = 0; i < s.staff[p]; i++) arr.push({ shift: si, proc: p, state: 0, inWin: false, brk: false, ot: false, otStart: 0, otEnd: 0, prod: s.productivityPct / 100, otMin: 0 }); });
+    PROCESSES.forEach(p => { for (let i = 0; i < s.staff[p]; i++) arr.push({ shift: si, home: p, proc: p, state: 0, inWin: false, brk: false, ot: false, otStart: 0, otEnd: 0, prod: s.productivityPct / 100, otMin: 0, busyW1: 0, changes: 0, changeMin: 0 }); });
     workers.push(...arr);
     return arr;
   });
-  const setState = (w: Worker, s: 0 | 1 | 2 | 3): void => {
+  const setState = (w: Worker, s: Worker['state']): void => {
     const old = w.state;
     if (old === s) return;
     const P = pools[w.proc];
@@ -102,14 +106,12 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     if (s === 1) P.idle.push(w);
     if (s === 1 || s === 2) P.duty++;
     if (s === 2) P.busy++;
-    logPC(w.proc);
   };
-  const pending = (p: ProcessKey): number => pools[p].q.length + pools[p].busy;
-  const hasWorkAhead = (p: ProcessKey): boolean => {
-    if (p === 'load') return pending('load') > 0;
-    for (const k of PROCESSES) if (ORDER[k] <= ORDER[p] && k !== 'load' && pending(k) > 0) return true;
-    return basketsWaiting > 0 && ORDER[p] >= ORDER.reverify;
-  };
+  /** ¿Hay trabajo que esta persona podría empezar ya en este proceso? */
+  const hasWork = (P: Pool): boolean => P.free.length > 0 || (P.q.length > 0 && P.stBusy < P.stations);
+  /** ¿Faltan manos? (tareas que podrían empezar ya, menos quienes están libres o en camino) */
+  const needsHelp = (P: Pool): boolean => P.idle.length + P.incoming < Math.min(P.q.length, Math.max(0, P.stations - P.stBusy)) + P.free.length;
+  const anyWork = (): boolean => basketsWaiting > 0 || PROCESSES.some(p => pools[p].q.length || pools[p].free.length || pools[p].busy);
   const otDay = new Array(14).fill(0);
   const endOT = (w: Worker): void => {
     const m = now - w.otStart;
@@ -117,66 +119,101 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     w.ot = false;
   };
   const leaveOT = (w: Worker): void => { endOT(w); setState(w, 0); };
-  const checkIdleOT = (): void => {
-    for (const w of otWorkers) if (w.ot && w.state === 1 && (!hasWorkAhead(w.proc) || now >= w.otEnd)) leaveOT(w);
-  };
   const otWorkers = new Set<Worker>();
+  const checkIdleOT = (): void => {
+    for (const w of otWorkers) if (w.ot && w.state === 1 && (!anyWork() || now >= w.otEnd)) leaveOT(w);
+  };
+
+  /* multiskill: a dónde va una persona que quedó libre */
+  const pickTarget = (w: Worker): ProcessKey => {
+    if (w.proc !== w.home && needsHelp(pools[w.home])) return w.home;        // vuelve a su puesto si tiene trabajo
+    if (hasWork(pools[w.proc])) return w.proc;
+    if (needsHelp(pools.load)) return 'load';                                 // la carga va primero si hay camión esperando
+    for (const p of W.multiskill.priority) if (needsHelp(pools[p])) return p;
+    return w.proc;
+  };
+  const move = (w: Worker, target: ProcessKey): void => {
+    setState(w, 4);
+    pools[target].incoming++;
+    if (now < WEEK) { w.changes++; w.changeMin += CHANGE; }
+    at(now + CHANGE, () => {
+      pools[target].incoming--;
+      w.proc = target;
+      if (!w.inWin && !w.ot) setState(w, 0);
+      else if (w.brk) setState(w, 3);
+      else { setState(w, 1); dispatch(target); }
+    });
+  };
+  function release(w: Worker): void {
+    if (w.ot) { if (now >= w.otEnd || !anyWork()) { leaveOT(w); return; } }
+    else if (!w.inWin) { setState(w, 0); return; }
+    else if (w.brk) { setState(w, 3); return; }
+    const target = pickTarget(w);
+    if (target !== w.proc) move(w, target); else setState(w, 1);
+  }
+  /** Trae gente libre de procesos sin trabajo; primero a quienes tienen este proceso como puesto. */
+  const recruit = (p: ProcessKey): void => {
+    const P = pools[p];
+    while (needsHelp(P)) {
+      let best: Worker | undefined;
+      for (const q of PROCESSES) {
+        if (q === p || hasWork(pools[q])) continue;
+        for (const w of pools[q].idle) { if (w.home === p) { best = w; break; } best ??= w; }
+        if (best?.home === p) break;
+      }
+      if (!best) return;
+      move(best, p);
+    }
+  };
 
   const dayBusy = new Array(14).fill(0), dayLast: (number | null)[] = new Array(14).fill(null);
-  const busyShift: Record<string, number> = {};
   const submit = (p: ProcessKey, j: Job): void => {
     const P = pools[p];
     j.eq = now;
-    P.q.push(j);
+    (j.free ? P.free : P.q).push(j);
     P.qPk += j.pk;
     if (P.qPk > P.maxQPk) P.maxQPk = P.qPk;
     dispatch(p);
+    recruit(p);
   };
   function dispatch(p: ProcessKey): void {
     const P = pools[p];
-    while (P.q.length && P.idle.length && P.busy < P.stations) {
-      const j = P.q.shift()!;
+    while (P.idle.length) {
+      let j: Job;
+      if (P.free.length) j = P.free.shift()!;
+      else if (P.q.length && P.stBusy < P.stations) j = P.q.shift()!;
+      else break;
       P.qPk -= j.pk;
       if (j.cancelled) continue;
       const w = P.idle.pop()!;
       setState(w, 2);
+      if (!j.free) P.stBusy++;
       j.started = true;
       P.jobs++;
       P.waitSum += now - (j.eq ?? now);
-      if (P.first == null) P.first = now;
       const d = j.base() / w.prod;
       const startDay = Math.min(13, Math.floor(now / DAY));
       j.start?.();
       at(now + d, () => {
-        P.busyMin += d;
-        if (startDay < 7) { P.busyW1 += d; busyShift[w.shift + '|' + p] = (busyShift[w.shift + '|' + p] ?? 0) + d; }
-        P.lastEnd = now;
+        if (!j.free) P.stBusy--;
+        if (startDay < 7) { P.busyW1 += d; w.busyW1 += d; }
         dayBusy[startDay] += d;
         dayLast[startDay] = Math.max(dayLast[startDay] ?? 0, now);
         j.done();
-        freeWorker(w);
+        release(w);
         checkIdleOT();
         dispatch(p);
       });
     }
   }
-  function freeWorker(w: Worker): void {
-    if (w.ot) {
-      if (now >= w.otEnd || !hasWorkAhead(w.proc)) { leaveOT(w); return; }
-      setState(w, 1);
-      return;
-    }
-    if (!w.inWin) { setState(w, 0); return; }
-    if (w.brk) { setState(w, 3); return; }
-    setState(w, 1);
-  }
 
   /* --------------------- instancias de turno --------------------- */
-  const paid = { proc: {} as Record<string, number>, shiftProc: {} as Record<string, number>, day: new Array(14).fill(0) };
+  const paid = { shift: W.shifts.map(() => 0), day: new Array(14).fill(0) };
   const backlog: BacklogStat[] = [];
   W.shifts.forEach((s, si) => {
     const st = hm(s.start)!, en0 = hm(s.end)!;
     const len = en0 > st ? en0 - st : en0 + DAY - st;
+    const people = PROCESSES.reduce((a, p) => a + s.staff[p], 0);
     for (let d = 0; d < 14; d++) {
       if (!s.days[d % 7]) continue;
       const ws = d * DAY + st, we = ws + len;
@@ -189,35 +226,29 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
         brkMin += be - cand;
         at(cand, () => shiftWorkers[si].forEach(w => { if (!w.inWin) return; w.brk = true; if (w.state === 1) setState(w, 3); }));
         at(be, () => {
-          shiftWorkers[si].forEach(w => { w.brk = false; if (w.inWin && w.state === 3) setState(w, 1); });
+          shiftWorkers[si].forEach(w => { w.brk = false; if (w.inWin && w.state === 3) release(w); });
           PROCESSES.forEach(dispatch);
         });
       });
-      const effective = len - brkMin;
-      if (d < 7) PROCESSES.forEach(p => {
-        const m = effective * s.staff[p];
-        paid.proc[p] = (paid.proc[p] ?? 0) + m;
-        paid.shiftProc[si + '|' + p] = (paid.shiftProc[si + '|' + p] ?? 0) + m;
-        paid.day[d] += m;
-      });
+      if (d < 7) { paid.shift[si] += (len - brkMin) * people; paid.day[d] += (len - brkMin) * people; }
       at(ws, () => {
         shiftWorkers[si].forEach(w => {
           w.inWin = true; w.brk = false;
           if (w.ot) endOT(w); // si está en una tarea, la termina antes de quedar libre
-          if (w.state === 0 || w.state === 3) setState(w, 1);
+          if (w.state === 0 || w.state === 3) { if (w.state === 0) w.proc = w.home; release(w); }
         });
         PROCESSES.forEach(dispatch);
       });
       at(we, () => {
         const wip = snapshot();
-        backlog.push({ shift: s.name, day: d, time: now, wip, total: wip.unload + wip.decon + wip.sort + wip.baskets + wip.reverify + wip.branch + wip.stage });
+        backlog.push({ shift: s.name, day: d, time: now, wip, total: wip.unload + wip.decon + wip.sort + wip.hospital + wip.baskets + wip.reverify + wip.branch + wip.stage });
         const otH = s.night ? s.overtimeHours : 0;
         shiftWorkers[si].forEach(w => {
           w.inWin = false; w.brk = false;
           if (otH > 0) {
             w.ot = true; w.otStart = now; w.otEnd = now + otH * 60; otWorkers.add(w);
             if (w.state === 3) setState(w, 1);
-            if (w.state === 1 && !hasWorkAhead(w.proc)) leaveOT(w);
+            if (w.state === 1 && !anyWork()) leaveOT(w);
           } else if (w.state === 1 || w.state === 3) setState(w, 0);
         });
         if (otH > 0) at(now + otH * 60, () => shiftWorkers[si].forEach(w => { if (w.ot && w.state === 1) leaveOT(w); }));
@@ -238,8 +269,10 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
   const makePkg = (ti: number): Pkg => {
     const g = pick(cumG), s = pick(cumS[g]), pr = profOf[g], v = pr.variationPct / 100;
     const f = 1 + (rnd() * 2 - 1) * v, fk = 1 + (rnd() * 2 - 1) * v;
-    const vol = (pr.lengthCm * pr.widthCm * pr.heightCm / 1000) * f * f * f;
-    return { ti, g, s, r: G[g].dest === 'branch' ? Math.floor(rnd() * R) : -1, vol, kg: pr.weightKg * fk, wi2: -1, rc0: -1, bi: -1 };
+    const kg = pr.weightKg * fk;
+    // shortcut: se comparan las medidas sin rotar el paquete; alcanza mientras no se modelen paquetes alargados
+    const nc = ST === 'sorter' && (kg > SR.maxKg || pr.lengthCm * f > SR.maxLengthCm || pr.widthCm * f > SR.maxWidthCm || pr.heightCm * f > SR.maxHeightCm);
+    return { ti, g, s, r: G[g].dest === 'branch' ? Math.floor(rnd() * R) : -1, vol: (pr.lengthCm * pr.widthCm * pr.heightCm / 1000) * f * f * f, kg, wi2: -1, bi: -1, nc, relabeled: false };
   };
 
   interface InTruck { ti: number; name: string; day: number; arr: number; ulds: Pkg[][]; boxes: Pkg[][]; loose: Pkg[]; total: number; sorted: number; looseDone: number; unloadLeft: number; unloadEnd: number | null; sortEnd: number | null }
@@ -265,17 +298,32 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
   let unfinished = totPk, inboundLeft = trucks.length, endT = 0;
   const EV: Record<string, number> = { 'WI-2': 0, 'WI-3 + WI-4': 0, 'AV-1': 0, 'RC-0': 0, 'LM-1': 0, 'LM-12': 0 };
   const scans = G.map(() => 0), basketsUsed = G.map(() => 0), containers = G.map(() => 0);
-  const hourly = { sorted: [] as number[], rc0: [] as number[] };
-  const hadd = (k: 'sorted' | 'rc0', n: number): void => { const h = Math.floor(now / 60); const a = hourly[k]; while (a.length <= h) a.push(0); a[h] += n; };
+  const hourly = { sorted: [] as number[], rc0: [] as number[], inducted: [] as number[] };
+  const hadd = (k: 'sorted' | 'rc0' | 'inducted', n: number): void => { const h = Math.floor(now / 60); const a = hourly[k]; while (a.length <= h) a.push(0); a[h] += n; };
   const dayRc0 = new Array(14).fill(0), dayFin = new Array(14).fill(0);
-  const times: number[] = [], timesG: number[][] = G.map(() => []);
-  const setRc0 = (pk: Pkg): void => {
-    pk.rc0 = now; EV['RC-0']++; hadd('rc0', 1); dayRc0[Math.min(13, Math.floor(now / DAY))]++;
-    if (pk.wi2 >= 0) { const d = now - pk.wi2; times.push(d); timesG[pk.g].push(d); }
-  };
   const finish = (): void => { unfinished--; dayFin[Math.min(13, Math.floor(now / DAY))]++; endT = Math.max(endT, now); };
   let swaps = 0, basketsWaiting = 0;
   const inBaskets = { n: 0 };
+  const hosp = { in: 0, relabeled: 0, destroyed: 0 };
+  const sorterSt = { inducted: 0, nonConveyable: 0, sharedChute: 0, noRead: 0 };
+
+  /* CPT: salidas de camión (Stage out) o retiros de carteros (Branch), ordenados */
+  const cptStage: number[][] = G.map(g => g.dest === 'branch' ? [] : g.outbound.flatMap(o => [...Array(14).keys()].filter(d => o.days[d % 7]).map(d => d * DAY + hm(o.arrival)! + W.outboundLoadWindowMin)).sort((a, b) => a - b));
+  const pickupTimes = (r: number): number[] => W.routes.windows.flatMap(v => [...Array(14).keys()].filter(d => v.days[d % 7]).map(d => d * DAY + hm(v.first)! + r * v.everyMin));
+  const cptRoute: number[][] = [...Array(R).keys()].map(r => pickupTimes(r).sort((a, b) => a - b));
+  const times: number[] = [], timesG: number[][] = G.map(() => []);
+  const cptRec = G.map(() => ({ n: 0, onTime: 0, noCpt: 0, delays: [] as number[] }));
+  const setRc0 = (pk: Pkg): void => {
+    EV['RC-0']++; hadd('rc0', 1); dayRc0[Math.min(13, Math.floor(now / DAY))]++;
+    const d = now - pk.wi2; times.push(d); timesG[pk.g].push(d);
+    const list = G[pk.g].dest === 'branch' ? cptRoute[pk.r] : cptStage[pk.g];
+    const cpt = list.find(x => x >= pk.wi2 + W.cptLeadMin);
+    const c = cptRec[pk.g];
+    c.n++;
+    if (cpt == null) c.noCpt++;
+    else if (now <= cpt + 1e-9) c.onTime++;
+    else c.delays.push(now - cpt);
+  };
 
   /* paso 1-2: llegada → descarga → desconsolidación */
   trucks.forEach(tr => at(tr.arr, () => {
@@ -302,32 +350,83 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     } }));
   }));
 
-  /* paso 3: sorting a canastos (cierre al terminar de procesar el camión) */
-  const fill = new Map<string, { n: number; l: number; idx: number }>();
+  /* paso 3: sorting (manual con PDA, Pick to Light o sorter) → hospital o canasto */
+  // sorter con más servicios que bocas: los servicios se reparten en ronda y las bocas compartidas se reclasifican a mano
+  const svcKeys = G.flatMap((g, gi) => g.services.map((_, si) => gi + '-' + si));
+  const shared = new Set(ST === 'sorter' && svcKeys.length > SR.chutes ? svcKeys.filter((_, i) => i % SR.chutes < svcKeys.length - SR.chutes) : []);
+  const fill = new Map<string, { n: number; l: number; idx: number; assigned: number[] }>();
   const baskets = new Map<string, Pkg[][]>();
-  function submitSort(pk: Pkg): void {
+  const sendsOnFull = (gi: number): boolean => G[gi].dest === 'branch' && !G[gi].reverify;
+  /** Reserva lugar en el canasto al empezar la tarea; devuelve los minutos extra si hubo que cambiar un canasto lleno. */
+  const reserve = (pk: Pkg): number => {
     const key = pk.ti + '|' + pk.g + '-' + pk.s;
+    let f = fill.get(key), extra = 0;
+    if (!f) { f = { n: 0, l: 0, idx: 0, assigned: [0] }; fill.set(key, f); basketsUsed[pk.g]++; }
+    else if (f.n + 1 > cap.basketPkgs || f.l + pk.vol > cap.basketLiters) {
+      f.idx++; f.n = 0; f.l = 0; f.assigned.push(0); basketsUsed[pk.g]++; swaps++; extra = T('swap');
+      const full = f.idx - 1;
+      if (sendsOnFull(pk.g)) at(now, () => sendIfComplete(key, full));
+    }
+    f.n++; f.l += pk.vol; f.assigned[f.idx]++; pk.bi = f.idx;
+    return extra;
+  };
+  /* Branch sin reverificación: el RC-0 ocurre al llenarse el canasto, después del primer escaneo */
+  const sendIfComplete = (key: string, bi: number): void => {
+    const b = baskets.get(key)?.[bi], f = fill.get(key);
+    if (!b || !f || bi >= f.idx || b.length !== f.assigned[bi]) return;
+    baskets.get(key)![bi] = [];
+    const [, sk] = key.split('|');
+    inBaskets.n -= b.length; basketsWaiting -= b.length;
+    toDest(+sk.split('-')[0], mkUnit(b, sk));
+  };
+  const resolve = (pk: Pkg): void => { const tr = trucks[pk.ti]; if (++tr.sorted === tr.total) { tr.sortEnd = now; closeTruck(tr); } };
+  const place = (pk: Pkg): void => {
+    const key = pk.ti + '|' + pk.g + '-' + pk.s;
+    let b = baskets.get(key);
+    if (!b) { b = []; baskets.set(key, b); }
+    (b[pk.bi] ||= []).push(pk);
+    EV['WI-3 + WI-4']++; scans[pk.g]++; hadd('sorted', 1); inBaskets.n++; basketsWaiting++;
+    L('sortE', { sk: pk.g + '-' + pk.s });
+    if (sendsOnFull(pk.g)) sendIfComplete(key, pk.bi);
+    resolve(pk);
+  };
+  const toHospital = (pk: Pkg): void => {
+    hosp.in++;
+    L('hosIn');
+    submit('hospital', { pk: 1, base: () => T('relabel'), done: () => {
+      if (rnd() < HOS.relabelPct / 100) { hosp.relabeled++; pk.relabeled = true; L('hosOut', { k: 'r' }); submitSort(pk); }
+      else { hosp.destroyed++; L('hosOut', { k: 'd' }); finish(); resolve(pk); }
+    } });
+  };
+  const exception = (pk: Pkg, extraPct = 0): 'noRead' | 'exc' | null => {
+    if (pk.relabeled) return null; // un paquete reetiquetado no vuelve al hospital
+    const u = rnd() * 100;
+    return u < extraPct ? 'noRead' : u < extraPct + HOS.exceptionPct ? 'exc' : null;
+  };
+  /** Sorting manual con PDA (también el de los no mecanizables y las bocas compartidas del sorter). La excepción se detecta al escanear. */
+  const manualSort = (pk: Pkg, key: TimeKey, free: boolean): void => {
+    let ex: string | null = null;
+    submit('sort', { pk: 1, free,
+      base: () => { ex = exception(pk); return T(key) + (ex ? 0 : reserve(pk)); },
+      done: () => { if (ex) toHospital(pk); else place(pk); } });
+  };
+  function submitSort(pk: Pkg): void {
+    if (ST !== 'sorter') return manualSort(pk, ST === 'ptl' ? 'sortPtl' : 'sort', false);
+    if (pk.nc) { sorterSt.nonConveyable++; return manualSort(pk, 'sort', true); }
+    const sk = pk.g + '-' + pk.s;
+    let ex: string | null = null;
     submit('sort', { pk: 1,
-      base: () => {
-        let f = fill.get(key);
-        let swap = false;
-        if (!f) { f = { n: 0, l: 0, idx: 0 }; fill.set(key, f); basketsUsed[pk.g]++; }
-        else if (f.n + 1 > cap.basketPkgs || f.l + pk.vol > cap.basketLiters) { f.idx++; f.n = 0; f.l = 0; swap = true; basketsUsed[pk.g]++; swaps++; }
-        f.n++; f.l += pk.vol; pk.bi = f.idx;
-        return T('sort') + (swap ? T('swap') : 0);
-      },
+      // la máquina limita el ritmo: con k inductores trabajando, cada uno no puede inducir más rápido que k / capacidad
+      base: () => { ex = exception(pk, SR.noReadPct); return Math.max(T('induct'), pools.sort.stBusy / (SR.machinePerHour / 60)) + (ex || shared.has(sk) ? 0 : reserve(pk)); },
       done: () => {
-        let b = baskets.get(key);
-        if (!b) { b = []; baskets.set(key, b); }
-        (b[pk.bi] ||= []).push(pk);
-        EV['WI-3 + WI-4']++; scans[pk.g]++; hadd('sorted', 1); inBaskets.n++; basketsWaiting++;
-        L('sortE', { sk: pk.g + '-' + pk.s });
-        const tr = trucks[pk.ti];
-        if (++tr.sorted === tr.total) { tr.sortEnd = now; closeTruck(tr); }
+        sorterSt.inducted++; hadd('inducted', 1);
+        if (ex) { if (ex === 'noRead') sorterSt.noRead++; toHospital(pk); }
+        else if (shared.has(sk)) { sorterSt.sharedChute++; submit('sort', { pk: 1, free: true, base: () => T('sort') + reserve(pk), done: () => place(pk) }); }
+        else place(pk);
       } });
   }
 
-  /* paso 4-5: cierre → reverificación/contenedores o directo */
+  /* paso 4-5: cierre del camión → reverificación/contenedores o directo */
   function closeTruck(tr: InTruck): void {
     L('close', { ti: tr.ti });
     G.forEach((g, gi) => {
@@ -389,7 +488,7 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
       for (let d = 0; d < 14; d++) {
         if (!o.days[d % 7]) continue;
         const arr = d * DAY + hm(o.arrival)!;
-        const tk: OutTruck = { gi, day: d, arr, sched: arr + W.outboundLoadWindowMin, dep: -1, state: 'here', m3: 0, kg: 0, units: 0, pkgs: 0, inflight: 0, jobs: [] };
+        const tk: OutTruck = { gi, day: d, arr, sched: arr + W.outboundLoadWindowMin, state: 'here', m3: 0, kg: 0, units: 0, pkgs: 0, inflight: 0, jobs: [] };
         at(arr, () => { present[gi].push(tk); L('otA', { g: gi }); tryLoad(gi); });
         at(tk.sched, () => {
           tk.state = 'closing';
@@ -425,37 +524,34 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     }
   }
   function depart(tk: OutTruck): void {
-    tk.state = 'gone'; tk.dep = now;
+    tk.state = 'gone';
     present[tk.gi] = present[tk.gi].filter(t => t !== tk);
     L('otD', { g: tk.gi });
     if (tk.day < 7 || tk.pkgs > 0) outStats.push({ gi: tk.gi, group: G[tk.gi].name, day: tk.day, arrival: tk.arr, scheduled: tk.sched, departure: now, units: tk.units, pkgs: tk.pkgs, m3: tk.m3, kg: tk.kg, late: Math.max(0, now - tk.sched), leftUnits: stage[tk.gi].length, leftPkgs: stage[tk.gi].reduce((a, u) => a + u.pk.length, 0) });
   }
 
-  /* paso 7b: carteros retiran cada ruta */
+  /* paso 7b: carteros retiran cada ruta en cada ventana */
   const pickups: PickupStat[] = [];
   if (G.some(g => g.dest === 'branch')) {
-    for (let d = 0; d < 14; d++) {
-      if (!W.routes.days[d % 7]) continue;
-      for (let r = 0; r < R; r++) {
-        const t0 = d * DAY + hm(W.routes.first)! + r * W.routes.everyMin;
-        at(t0, () => {
-          const pk = routeBuf[r];
-          if (!pk.length) { if (d < 7) pickups.push({ route: r, day: d, time: now, pkgs: 0 }); return; }
-          routeBuf[r] = [];
-          L('pmA', { r });
-          at(now + T('handover'), () => {
-            EV['LM-12'] += pk.length; pk.forEach(() => finish());
-            pickups.push({ route: r, day: d, time: now, pkgs: pk.length });
-            L('pick', { r, n: pk.length });
-          });
+    for (let r = 0; r < R; r++) cptRoute[r].forEach(t0 => {
+      const d = Math.floor(t0 / DAY);
+      at(t0, () => {
+        const pk = routeBuf[r];
+        if (!pk.length) { if (d < 7) pickups.push({ route: r, day: d, time: now, pkgs: 0 }); return; }
+        routeBuf[r] = [];
+        L('pmA', { r });
+        at(now + T('handover'), () => {
+          EV['LM-12'] += pk.length; pk.forEach(() => finish());
+          pickups.push({ route: r, day: d, time: now, pkgs: pk.length });
+          L('pick', { r, n: pk.length });
         });
-      }
-    }
+      });
+    });
   }
 
   /* ------------------------ muestreo ------------------------ */
   const snapshot = (): Wip => ({
-    unload: pools.unload.qPk + 0, decon: pools.decon.qPk, sort: pools.sort.qPk, baskets: inBaskets.n,
+    unload: pools.unload.qPk, decon: pools.decon.qPk, sort: pools.sort.qPk, hospital: pools.hospital.qPk, baskets: inBaskets.n,
     reverify: pools.reverify.qPk, branch: pools.branch.qPk,
     stage: stagePk.reduce((a, b, i) => a + (G[i].dest === 'branch' ? 0 : b), 0),
     routes: routeBuf.reduce((a, b) => a + b.length, 0),
@@ -490,25 +586,27 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     let sum = 0; for (let i = 0; i < s.length; i++) sum += s[i];
     return { n: s.length, mean: sum / s.length, p90: percentile(s, 90), p95: percentile(s, 95), p98: percentile(s, 98) };
   };
-  const otByProc: Record<string, number> = {}, otByShiftProc: Record<string, number> = {};
-  workers.forEach(w => { otByProc[w.proc] = (otByProc[w.proc] ?? 0) + w.otMin; otByShiftProc[w.shift + '|' + w.proc] = (otByShiftProc[w.shift + '|' + w.proc] ?? 0) + w.otMin; });
+  const cptStat = (c: { n: number; onTime: number; noCpt: number; delays: number[] }): CptStat => {
+    const s = Float64Array.from(c.delays).sort();
+    return { n: c.n, onTime: c.onTime, late: s.length, noCpt: c.noCpt, pct: c.n ? c.onTime / c.n : NaN,
+      delayMean: s.length ? s.reduce((a, b) => a + b, 0) / s.length : NaN, delayP90: percentile(s, 90) };
+  };
   const processes: ProcessStat[] = PROCESSES.map(p => {
-    const P = pools[p], pm = (paid.proc[p] ?? 0) + (otByProc[p] ?? 0);
-    return { key: p, jobs: P.jobs, busyMin: P.busyW1, paidMin: pm, otMin: otByProc[p] ?? 0, util: pm > 0 ? P.busyW1 / pm : 0,
-      waitAvg: P.jobs ? P.waitSum / P.jobs : 0, maxQueuePkgs: P.maxQPk, first: P.first, lastEnd: P.lastEnd };
+    const P = pools[p];
+    return { key: p, jobs: P.jobs, busyMin: P.busyW1, waitAvg: P.jobs ? P.waitSum / P.jobs : 0, maxQueuePkgs: P.maxQPk };
   });
-  const shifts: ShiftStat[] = [];
-  W.shifts.forEach((s, si) => PROCESSES.forEach(p => {
-    const k = si + '|' + p, pm = (paid.shiftProc[k] ?? 0) + (otByShiftProc[k] ?? 0);
-    if (!s.staff[p]) return;
-    shifts.push({ shiftId: s.id, name: s.name, night: s.night, process: p, workers: s.staff[p], paidMin: pm, busyMin: busyShift[k] ?? 0, otMin: otByShiftProc[k] ?? 0, util: pm > 0 ? (busyShift[k] ?? 0) / pm : 0 });
-  }));
+  const shifts: ShiftStat[] = W.shifts.map((s, si) => {
+    const ws = shiftWorkers[si], ot = ws.reduce((a, w) => a + w.otMin, 0), pm = paid.shift[si] + ot, busy = ws.reduce((a, w) => a + w.busyW1, 0);
+    return { shiftId: s.id, name: s.name, night: s.night, workers: ws.length, paidMin: pm, busyMin: busy, otMin: ot, util: pm > 0 ? busy / pm : 0,
+      changes: ws.reduce((a, w) => a + w.changes, 0), changeMin: ws.reduce((a, w) => a + w.changeMin, 0) };
+  });
   const arrivedDay = new Array(7).fill(0);
   trucks.forEach(t => (arrivedDay[t.day] += t.total));
   const days: DayStat[] = [];
   for (let d = 0; d < 7; d++) days.push({ day: d, arrived: arrivedDay[d], rc0: dayRc0[d], finished: dayFin[d], paidMin: paid.day[d], busyMin: dayBusy[d], otMin: otDay[d], lastActivity: dayLast[d] });
   const groups: GroupStat[] = G.map((g, gi) => ({ name: g.name, dest: g.dest, reverify: g.reverify, pkgs: groupTot[gi], baskets: basketsUsed[gi], containers: containers[gi],
-    scans: scans[gi], spp: groupTot[gi] ? scans[gi] / groupTot[gi] : 0, stageMax: stageMax[gi], time: stats(timesG[gi]) }));
+    scans: scans[gi], spp: groupTot[gi] ? scans[gi] / groupTot[gi] : 0, stageMax: stageMax[gi], time: stats(timesG[gi]), cpt: cptStat(cptRec[gi]) }));
+  const all = cptRec.reduce((a, c) => ({ n: a.n + c.n, onTime: a.onTime + c.onTime, noCpt: a.noCpt + c.noCpt, delays: a.delays.concat(c.delays) }), { n: 0, onTime: 0, noCpt: 0, delays: [] as number[] });
 
   return {
     seed,
@@ -518,7 +616,9 @@ export function simulate(W: Warehouse, opt: SimOptions = {}): SimResult {
     outbound: outStats.sort((a, b) => a.arrival - b.arrival || a.gi - b.gi),
     pickups, backlog, groups,
     inbound: trucks.map(t => ({ name: t.name, day: t.day, arrival: t.arr, pkgs: t.total, boxes: t.boxes.length, ulds: t.ulds.length, loose: t.loose.length, unloadEnd: t.unloadEnd, sortEnd: t.sortEnd })),
-    time: stats(times), events: EV, hourly, samples: samplesOut, warnings, log,
-    groupTotals: groupTot, routeTotals: routeTot, swaps,
+    time: stats(times), cpt: cptStat(all), hospital: hosp,
+    sorter: ST === 'sorter' ? { ...sorterSt, peakPerHour: Math.max(0, ...hourly.inducted) } : null,
+    events: EV, hourly: { sorted: hourly.sorted, rc0: hourly.rc0 }, samples: samplesOut, warnings, log,
+    routeTotals: routeTot, swaps,
   };
 }

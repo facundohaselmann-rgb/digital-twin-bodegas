@@ -1,6 +1,6 @@
 /* Plano 2D animado: se dibuja en SVG a partir de la configuración y se
    anima reproduciendo el log de eventos de la simulación. */
-import type { LogEv, SimResult } from '../engine/simulate';
+import type { LogEv, Sample, SimResult } from '../engine/simulate';
 import { PROCESSES, type ProcessKey, type Warehouse } from '../model/types';
 import { DAY, fmtHM, hm } from '../model/time';
 import { nf, t } from '../i18n';
@@ -15,15 +15,14 @@ export interface PlayState {
   bk: Record<string, number>; closed: Record<string, boolean>;
   lane: number[]; lanePk: number[]; tk: number[]; tkPk: number[]; tkLeft: (number | null)[];
   route: number[]; pm: boolean[];
-  busy: Record<ProcessKey, number>; duty: Record<ProcessKey, number>;
+  hos: number; hosR: number; hosD: number;
 }
 
 export function freshState(w: Warehouse): PlayState {
   const n = w.groups.length, R = w.routes.count;
-  const z = () => Object.fromEntries(PROCESSES.map(p => [p, 0])) as Record<ProcessKey, number>;
   return { inDoor: 0, stB: 0, stU: 0, stL: 0, openB: 0, openU: 0, unl: 0, trucks: 0, sorted: 0, rv: 0, br: 0, rc0: 0, picked: 0,
     bk: {}, closed: {}, lane: new Array(n).fill(0), lanePk: new Array(n).fill(0), tk: new Array(n).fill(0), tkPk: new Array(n).fill(0), tkLeft: new Array(n).fill(null),
-    route: new Array(R).fill(0), pm: new Array(R).fill(false), busy: z(), duty: z() };
+    route: new Array(R).fill(0), pm: new Array(R).fill(false), hos: 0, hosR: 0, hosD: 0 };
 }
 
 export type Fx = (kind: 'sort' | 'stage' | 'load' | 'route', a: string | number, b?: string | null) => void;
@@ -49,7 +48,8 @@ export function apply(S: PlayState, e: LogEv, fx?: Fx): void {
     case 'otA': { const g = e.g as number; S.tk[g] = 1; S.tkPk[g] = 0; break; }
     case 'ld': { const g = e.g as number; S.lane[g]--; S.lanePk[g] -= n; S.tkPk[g] += n; S.rc0 += n; fx?.('load', g); break; }
     case 'otD': { const g = e.g as number; S.tk[g] = 0; S.tkLeft[g] = e.t; break; }
-    case 'pc': { const p = e.p as ProcessKey; S.busy[p] = e.b as number; S.duty[p] = e.d as number; break; }
+    case 'hosIn': S.hos++; break;
+    case 'hosOut': S.hos--; if (e.k === 'r') S.hosR++; else S.hosD++; break;
   }
 }
 
@@ -93,15 +93,19 @@ export function buildPlan(svg: SVGSVGElement, w: Warehouse): Geo {
   h += `<text class="p-md" id="stB" x="27" y="220"></text><text class="p-md" id="stU" x="27" y="232"></text><text class="p-md" id="stL" x="27" y="244"></text>`;
   /* desconsolidación */
   h += `<rect class="p-area" x="20" y="260" width="106" height="92" rx="6"/><text class="p-az" x="26" y="274" style="font-size:7.6px;letter-spacing:0">${t('plan.decon')}</text>`;
-  h += `<text class="p-val" id="opn" x="27" y="296"></text><text class="p-sm" id="opd" x="27" y="310"></text>`;
+  h += `<text class="p-val" id="opn" x="27" y="296"></text>`;
+  /* hospital */
+  h += `<rect class="p-area" x="20" y="360" width="106" height="92" rx="6"/><text class="p-az" x="27" y="374">${t('plan.hospital')}</text>`;
+  h += `<text class="p-val" id="hos" x="27" y="396"></text><text class="p-sm" id="hosd" x="27" y="410"></text>`;
   /* cinta + scan 1 */
-  const nS1 = w.capacity.stations.sort, sGap = Math.min(22, 470 / Math.max(1, nS1));
+  const ST = w.sorting.type, nS1 = ST === 'sorter' ? w.sorting.sorter.inductionPoints : w.capacity.stations.sort, sGap = Math.min(22, 470 / Math.max(1, nS1));
   let rolls = '';
   for (let x = 134; x < 640; x += 12) rolls += `<line class="p-roll" x1="${x}" y1="263" x2="${x}" y2="275"/>`;
   h += `<rect class="p-belt" x="126" y="262" width="514" height="14" rx="3"/>${rolls}<text class="p-sm" x="540" y="258">${t('plan.sortLine')}</text>`;
   for (let i = 0; i < nS1; i++) h += `<rect class="p-st" x="${140 + i * sGap}" y="244" width="${Math.min(16, sGap - 3)}" height="15" rx="2"/>`;
   const s1x = Math.min(470, 144 + nS1 * sGap);
-  h += `<text class="p-az" x="${s1x}" y="255">${t('plan.scan1')}</text><text class="p-sm" id="sq" x="${s1x + 42}" y="255"></text>`;
+  const s1label = ST === 'sorter' ? t('plan.sorter', { b: w.sorting.sorter.chutes }) : ST === 'ptl' ? t('plan.ptl') : t('plan.scan1');
+  h += `<text class="p-az" x="${s1x}" y="255">${s1label}</text><text class="p-sm" id="sq" x="${s1x + s1label.length * 6.4 + 8}" y="255"></text>`;
   /* zonas de grupos */
   zones.forEach(z => {
     const g = gs[z.gi];
@@ -149,26 +153,27 @@ export function buildPlan(svg: SVGSVGElement, w: Warehouse): Geo {
   h += `<rect class="p-area" x="712" y="290" width="292" height="214" rx="7"/><text class="p-az" x="720" y="305">${t('plan.branch')}</text><text class="p-sm" x="836" y="305">${t('plan.branchSub')}</text>`;
   const rRows = R <= 5 ? 1 : R <= 12 ? 2 : R <= 24 ? 3 : 4, rCols = Math.ceil(R / rRows);
   const rw = Math.min(80, (276 - 6 * (rCols - 1)) / rCols), rh = Math.min(70, (190 - 6 * (rRows - 1)) / rRows);
-  const first = hm(w.routes.first) ?? 0;
   for (let r = 0; r < R; r++) {
     const x = 720 + (r % rCols) * (rw + 6), y = 312 + Math.floor(r / rCols) * (rh + 6);
     G.route[r] = { x, y, w: rw, h: rh };
-    const tm = fmtHM(first + r * w.routes.everyMin);
-    h += `<g id="rt${r}" class="rt"><title>R${r + 1} · ${tm}</title><rect class="b" x="${x}" y="${y}" width="${rw}" height="${rh}" rx="5"/><rect class="f" id="rtf${r}" x="${x + 1.5}" y="${y + rh - 1.5}" width="${rw - 3}" height="0" rx="3"/>`;
+    const times = w.routes.windows.map(v => fmtHM((hm(v.first) ?? 0) + r * v.everyMin)), tm = times[0] ?? '';
+    h += `<g id="rt${r}" class="rt"><title>R${r + 1} · ${times.join(' · ')}</title><rect class="b" x="${x}" y="${y}" width="${rw}" height="${rh}" rx="5"/><rect class="f" id="rtf${r}" x="${x + 1.5}" y="${y + rh - 1.5}" width="${rw - 3}" height="0" rx="3"/>`;
     h += `<text class="p-md" x="${x + 4}" y="${y + 11}" style="font-size:9px">R${r + 1}</text>${rw > 40 ? `<text class="p-sm" x="${x + rw - 3}" y="${y + 11}" text-anchor="end" style="font-size:7.5px">${tm}</text>` : ''}`;
     h += `<text class="p-bkc" id="rtc${r}" x="${x + rw / 2}" y="${y + rh / 2 + 5}"></text></g>`;
   }
   h += `<rect class="p-door" x="1006" y="380" width="9" height="60"/><text class="p-az" x="1022" y="404" style="font-size:9px">${t('plan.exit')}</text>`;
-  /* operarios: tantos puntos como el máximo de personas del proceso en un turno */
-  const dots = (k: ProcessKey, x: number, y: number, per: number, gap: number) => {
-    const n2 = Math.max(0, ...w.shifts.map(s => s.staff[k] || 0));
+  /* operarios: con multiskill cualquiera puede estar en cualquier proceso */
+  // shortcut: se dibujan como mucho `max` puntos por zona; alcanza para bodegas de hasta ~40 personas por turno
+  const people = Math.max(0, ...w.shifts.map(s => PROCESSES.reduce((a, p) => a + (s.staff[p] || 0), 0)));
+  const dots = (k: ProcessKey, x: number, y: number, per: number, gap: number, max = per * 2) => {
+    const n2 = Math.min(people, max);
     G.dots[k] = n2;
     let s = '';
     for (let i = 0; i < n2; i++) s += `<circle id="w${k}${i}" class="w-dot" cx="${x + (i % per) * gap}" cy="${y + Math.floor(i / per) * gap}" r="4"><title>${t('p.' + k)}</title></circle>`;
     return s;
   };
-  h += dots('unload', 96, 148, 3, 10) + dots('decon', 96, 330, 3, 10) + dots('sort', 146, 288, 42, 11) + dots('reverify', 656, 58 + nS2 * (s2h + 4) + 20, 4, 10)
-    + dots('branch', 656, 338 + nB * (bh2 + 4) + 10, 4, 10) + dots('load', 760, 250, 8, 10);
+  h += dots('unload', 96, 148, 3, 10) + dots('decon', 96, 330, 3, 10) + dots('sort', 146, 288, 42, 11, 42) + dots('reverify', 656, 58 + nS2 * (s2h + 4) + 20, 4, 10)
+    + dots('branch', 656, 338 + nB * (bh2 + 4) + 10, 4, 10) + dots('load', 760, 250, 8, 10, 8) + dots('hospital', 96, 372, 3, 10);
   h += `<g id="fx"></g>`;
   svg.innerHTML = h;
   return G;
@@ -189,7 +194,8 @@ function nextArrival(w: Warehouse, gi: number, tNow: number): number | null {
 }
 const dayTime = (x: number) => `${t('d' + (Math.floor(x / DAY) % 7))} ${fmtHM(x)}`;
 
-export function renderPlan(G: Geo, S: PlayState, tNow: number, w: Warehouse, r: SimResult, queue: { sort: number; reverify: number; branch: number }): void {
+export function renderPlan(G: Geo, S: PlayState, tNow: number, w: Warehouse, r: SimResult, smp: Sample | null): void {
+  const queue = { sort: smp?.wip.sort ?? 0, reverify: smp?.wip.reverify ?? 0, branch: smp?.wip.branch ?? 0 };
   const cap = w.capacity.basketPkgs;
   setTxt('ind', S.inDoor ? t('plan.trucksAtDoor', { n: S.inDoor }) : '');
   const units = S.stU + S.stB;
@@ -205,7 +211,8 @@ export function renderPlan(G: Geo, S: PlayState, tNow: number, w: Warehouse, r: 
   setTxt('stU', `${nf(S.stU)} ${t('plan.ulds')}`);
   setTxt('stL', `${nf(S.stL)} ${t('plan.loose')}`);
   setTxt('opn', t('plan.opening', { n: S.openB + S.openU }));
-  setTxt('opd', '');
+  setTxt('hos', t('plan.inHospital', { n: nf(S.hos) }));
+  setTxt('hosd', t('plan.hosOut', { r: nf(S.hosR), d: nf(S.hosD) }));
   Object.keys(G.bk).forEach(k => {
     const b = G.bk[k], c = Math.max(0, S.bk[k] ?? 0);
     const nb = c ? Math.ceil(c / cap) : 0, cur = c ? (c % cap || cap) : 0, fh = (b.h - 3) * cur / cap;
@@ -237,7 +244,7 @@ export function renderPlan(G: Geo, S: PlayState, tNow: number, w: Warehouse, r: 
     setCls('rt' + i, 'rt' + (S.pm[i] ? ' wait' : c ? ' ready' : ''));
   });
   PROCESSES.forEach(p => {
-    const nn = G.dots[p] || 0, b = S.busy[p], d = S.duty[p];
+    const nn = G.dots[p] || 0, b = smp?.busy[p] ?? 0, d = smp?.duty[p] ?? 0;
     for (let i = 0; i < nn; i++) setCls(`w${p}${i}`, 'w-dot' + (i < b ? ' busy' : i < d ? '' : ' off'));
   });
 }

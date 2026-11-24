@@ -9,7 +9,7 @@ import { DAY, fmtHM, hm } from '../../model/time';
 
 const PER: Record<TimeKey, string> = {
   unloadBox: 'per.box', unloadUld: 'per.uld', unloadLoose: 'per.pkg', openBox: 'per.box', emptyUld: 'per.uld', sort: 'per.pkg',
-  swap: 'per.basket', reverify: 'per.pkg', container: 'per.container', branchSort: 'per.pkg', load: 'per.unit', handover: 'per.route',
+  sortPtl: 'per.pkg', induct: 'per.pkg', relabel: 'per.pkg', swap: 'per.basket', reverify: 'per.pkg', container: 'per.container', branchSort: 'per.pkg', load: 'per.unit', handover: 'per.route',
 };
 
 export function ConfigTab() {
@@ -17,6 +17,7 @@ export function ConfigTab() {
     <div class="cfg">
       <GeneralCard />
       <ProfileCard />
+      <ProcessesCard />
       <InboundCard />
       <ShiftsCard />
       <GroupsCard />
@@ -113,7 +114,7 @@ function InboundCard() {
                 <td><Num path={`inbound.${i}.pkgsPerUld`} min={1} step={1} width={64} /></td>
                 <td><Num path={`inbound.${i}.volumeVarPct`} min={0} width={54} /></td>
                 <td><Num path={`inbound.${i}.timeVarMin`} min={0} width={54} /></td>
-                <td><button class="x" title={t('remove')} onClick={() => update(o => o.inbound.splice(i, 1))}>×</button></td>
+                <td><button class="x" title={t('remove')} onClick={() => { if (confirm(t('cfg.confirmDel', { name: tr.name }))) update(o => o.inbound.splice(i, 1)); }}>×</button></td>
               </tr>
             ))}
           </tbody>
@@ -195,7 +196,7 @@ function ShiftsCard() {
               <Field label={t('cfg.shiftName')}><Text path={`shifts.${i}.name`} /></Field>
               <Field label={t('cfg.start')} w={110}><Time path={`shifts.${i}.start`} /></Field>
               <Field label={t('cfg.end')} w={110}><Time path={`shifts.${i}.end`} /></Field>
-              <button class="x" title={t('remove')} onClick={() => update(o => o.shifts.splice(i, 1))}>×</button>
+              <button class="x" title={t('remove')} onClick={() => { if (confirm(t('cfg.confirmDel', { name: s.name }))) update(o => o.shifts.splice(i, 1)); }}>×</button>
             </div>
             <div class="frow" style={{ alignItems: 'center' }}>
               <DaysToggle path={`shifts.${i}.days`} />
@@ -228,7 +229,7 @@ function ShiftsCard() {
         <button class="btn sm" onClick={() => update(o => {
           const last = o.shifts[o.shifts.length - 1];
           o.shifts.push(last ? { ...structuredClone(last), id: uid('t'), name: `${t('cfg.shiftName')} ${o.shifts.length + 1}`, night: false, overtimeHours: 0 }
-            : { id: uid('t'), name: `${t('cfg.shiftName')} 1`, days: [...MON_SAT] as Days, start: '06:00', end: '14:00', breaks: [], productivityPct: 100, costPerHour: 5, night: false, overtimeHours: 0, staff: { unload: 1, decon: 1, sort: 2, reverify: 1, branch: 1, load: 1 } });
+            : { id: uid('t'), name: `${t('cfg.shiftName')} 1`, days: [...MON_SAT] as Days, start: '06:00', end: '14:00', breaks: [], productivityPct: 100, costPerHour: 5, night: false, overtimeHours: 0, staff: { unload: 1, decon: 1, sort: 2, hospital: 0, reverify: 1, branch: 1, load: 1 } });
         })}>{t('cfg.addShift')}</button>
         <Field label={t('cfg.otMult')} w={220}><Num path="costs.overtimeMultiplier" min={1} step={0.1} /></Field>
       </div>
@@ -284,19 +285,67 @@ function GroupsCard() {
 }
 
 function RoutesCard() {
-  const { w } = useWh();
-  const first = hm(w.routes.first) ?? 0;
+  const { w, update } = useWh();
   return (
     <div class="card">
       <h2>{t('cfg.routes')}</h2>
       <div class="sub">{t('cfg.routesSub')}</div>
+      <div class="frow"><Field label={t('cfg.routeCount')} w={180}><Num path="routes.count" min={1} max={60} step={1} /></Field></div>
+      <div class="sub" style={{ margin: '4px 0' }}>{t('cfg.windows')}</div>
+      {w.routes.windows.map((v, i) => (
+        <div class="frow" style={{ alignItems: 'flex-end' }} key={v.id}>
+          <Field label={t('cfg.windowName')}><Text path={`routes.windows.${i}.name`} /></Field>
+          <Field label={t('cfg.routeFirst')} w={120}><Time path={`routes.windows.${i}.first`} /></Field>
+          <Field label={t('cfg.routeEvery')} w={120}><Num path={`routes.windows.${i}.everyMin`} min={0} /></Field>
+          <DaysToggle path={`routes.windows.${i}.days`} />
+          <button class="x" title={t('remove')} onClick={() => { if (confirm(t('cfg.confirmDel', { name: v.name }))) update(o => o.routes.windows.splice(i, 1)); }}>×</button>
+          <div class="hint" style={{ flexBasis: '100%' }}>{[...Array(w.routes.count)].map((_, r) => `R${r + 1} ${fmtHM((hm(v.first) ?? 0) + r * v.everyMin)}`).join(' · ')}</div>
+        </div>
+      ))}
+      <button class="btn sm" onClick={() => update(o => o.routes.windows.push({ id: uid('v'), name: `${t('cfg.windowName')} ${o.routes.windows.length + 1}`, days: [...MON_SAT] as Days, first: '16:00', everyMin: 10 }))}>{t('cfg.addWindow')}</button>
+    </div>
+  );
+}
+
+function ProcessesCard() {
+  const { w, update } = useWh();
+  const pr = w.multiskill.priority;
+  return (
+    <div class="card wide">
+      <h2>{t('cfg.processes')}</h2>
+      <div class="sub">{t('cfg.processesSub')}</div>
       <div class="frow">
-        <Field label={t('cfg.routeCount')}><Num path="routes.count" min={1} max={60} step={1} /></Field>
-        <Field label={t('cfg.routeFirst')}><Time path="routes.first" /></Field>
-        <Field label={t('cfg.routeEvery')}><Num path="routes.everyMin" min={0} /></Field>
+        <Field label={t('cfg.sortType')} w={260}><Select path="sorting.type" options={[['manual', t('cfg.stManual')], ['ptl', t('cfg.stPtl')], ['sorter', t('cfg.stSorter')]]} /></Field>
+        <Field label={t('cfg.cptLead')} hint={t('cfg.cptHint')} w={420}><Num path="cptLeadMin" min={0} step={15} /></Field>
       </div>
-      <div class="frow"><DaysToggle path="routes.days" /></div>
-      <div class="hint">{[...Array(w.routes.count)].map((_, r) => `R${r + 1} ${fmtHM(first + r * w.routes.everyMin)}`).join(' · ')}</div>
+      {w.sorting.type === 'sorter' && <>
+        <div class="frow">
+          <Field label={t('cfg.induction')}><Num path="sorting.sorter.inductionPoints" min={1} step={1} /></Field>
+          <Field label={t('cfg.machine')}><Num path="sorting.sorter.machinePerHour" min={1} step={100} /></Field>
+          <Field label={t('cfg.chutes')}><Num path="sorting.sorter.chutes" min={1} step={1} /></Field>
+          <Field label={t('cfg.noRead')}><Num path="sorting.sorter.noReadPct" min={0} max={100} /></Field>
+        </div>
+        <div class="frow">
+          <Field label={t('cfg.maxKg')}><Num path="sorting.sorter.maxKg" min={0.1} /></Field>
+          <Field label={t('cfg.maxL')}><Num path="sorting.sorter.maxLengthCm" min={1} /></Field>
+          <Field label={t('cfg.maxW')}><Num path="sorting.sorter.maxWidthCm" min={1} /></Field>
+          <Field label={t('cfg.maxH')}><Num path="sorting.sorter.maxHeightCm" min={1} /></Field>
+        </div>
+        <div class="hint" style={{ marginBottom: '8px' }}>{t('cfg.sorterHint')}</div>
+      </>}
+      <div class="frow">
+        <Field label={t('cfg.exceptionPct')} hint={t('cfg.hospitalHint')}><Num path="hospital.exceptionPct" min={0} max={100} /></Field>
+        <Field label={t('cfg.relabelPct')}><Num path="hospital.relabelPct" min={0} max={100} /></Field>
+        <Field label={t('cfg.changeMin')}><Num path="multiskill.changeMin" min={0} /></Field>
+      </div>
+      <div class="sub" style={{ margin: '6px 0 4px' }}>{t('cfg.priority')}</div>
+      <div class="svcs">
+        {pr.map((p, i) => (
+          <span class="chip">{i + 1}. {t('p.' + p)}
+            {i > 0 && <button class="x" title={t('cfg.up')} aria-label={t('cfg.up')} onClick={() => update(o => { const a = o.multiskill.priority; [a[i - 1], a[i]] = [a[i], a[i - 1]]; })}>↑</button>}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }

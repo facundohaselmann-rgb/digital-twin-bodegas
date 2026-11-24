@@ -42,10 +42,10 @@ export function PlanTab({ w, r }: { w: Warehouse; r: SimResult }) {
     const c = ref.current;
     if (!c) return;
     const s = nearestSample(r.samples, c.P.t);
-    renderPlan(c.G, c.P.S, c.P.t, w, r, { sort: s?.wip.sort ?? 0, reverify: s?.wip.reverify ?? 0, branch: s?.wip.branch ?? 0 });
+    renderPlan(c.G, c.P.S, c.P.t, w, r, s);
     if (now != null) c.fx.step(now);
   };
-  const publish = () => { const c = ref.current; if (c) setView({ t: c.P.t, S: { ...c.P.S, busy: { ...c.P.S.busy }, duty: { ...c.P.S.duty } } }); };
+  const publish = () => { const c = ref.current; if (c) setView({ t: c.P.t, S: { ...c.P.S } }); };
 
   useEffect(() => {
     if (!svgRef.current) return;
@@ -93,7 +93,8 @@ export function PlanTab({ w, r }: { w: Warehouse; r: SimResult }) {
 
   const tt = view?.t ?? start, S = view?.S;
   const shiftsNow = activeShifts(w, tt);
-  const anyDuty = S ? PROCESSES.some(p => S.duty[p] > 0) : false;
+  const smp = nearestSample(r.samples, tt);
+  const anyDuty = smp ? PROCESSES.some(p => smp.duty[p] > 0) : false;
   const phase = shiftsNow.length ? 'work' : anyDuty ? 'ot' : 'off';
   const end = ref.current?.P.end ?? 7 * DAY;
   const totU = r.totals.boxes + r.totals.ulds + r.totals.loose;
@@ -122,7 +123,6 @@ export function PlanTab({ w, r }: { w: Warehouse; r: SimResult }) {
           <span><i style={{ background: 'var(--orange)' }} />{t('plan.legendRv')}</span>
           <span><i style={{ background: 'var(--green)' }} />{t('plan.legendDir')}</span>
           <span><i style={{ border: '1.5px dashed var(--muted)' }} />{t('plan.legendClosed')}</span>
-          <span><i style={{ background: 'var(--line)' }} />{t('plan.legendOff')}</span>
         </div>
       </div>
       <div class="side">
@@ -136,14 +136,15 @@ export function PlanTab({ w, r }: { w: Warehouse; r: SimResult }) {
             {totBr > 0 && row(t('live.br'), S.br, totBr)}
             {row(t('live.rc0'), S.rc0, r.totals.pkgs)}
             {totBr > 0 && row(t('live.picked'), S.picked, totBr)}
+            {r.hospital.in > 0 && row(t('live.hospital'), S.hosR + S.hosD, r.hospital.in)}
           </>}
         </div>
         <div class="card">
           <h2>{t('live.workers')}</h2>
           <div class="sub">{t('live.workersSub')}</div>
           {S && PROCESSES.map(p => (
-            <div class="role"><div class="top"><span>{t('p.' + p)}</span><b>{S.busy[p]} / {S.duty[p]}</b></div>
-              <div class="pbar"><i style={{ width: `${S.duty[p] ? (S.busy[p] / S.duty[p]) * 100 : 0}%` }} /></div></div>
+            <div class="role"><div class="top"><span>{t('p.' + p)}</span><b>{smp?.busy[p] ?? 0} / {smp?.duty[p] ?? 0}</b></div>
+              <div class="pbar"><i style={{ width: `${smp?.duty[p] ? (smp.busy[p] / smp.duty[p]) * 100 : 0}%` }} /></div></div>
           ))}
         </div>
       </div>

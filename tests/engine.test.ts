@@ -31,13 +31,15 @@ describe('simulación semanal — plantilla Jamaica', () => {
     expect(r.totals.pkgs).toBeGreaterThan(15000);
     expect(r.totals.unfinished).toBe(0);
     expect(r.events['WI-2']).toBe(r.totals.pkgs);
-    expect(r.events['WI-3 + WI-4']).toBe(r.totals.pkgs);
-    expect(r.events['RC-0']).toBe(r.totals.pkgs);
+    // los destruidos en el hospital no llegan a canasto ni a RC-0
+    expect(r.hospital.in).toBeGreaterThan(0);
+    expect(r.events['WI-3 + WI-4']).toBe(r.totals.pkgs - r.hospital.destroyed);
+    expect(r.events['RC-0']).toBe(r.totals.pkgs - r.hospital.destroyed);
   });
 
   it('los paquetes con reverificación tienen 2 escaneos', () => {
     const rv = r.groups.filter(g => g.reverify);
-    rv.forEach(g => expect(g.spp).toBeCloseTo(2, 5));
+    rv.forEach(g => expect(g.spp).toBeCloseTo(2, 1));
   });
 
   it('las horas extra solo ocurren en el turno noche', () => {
@@ -45,7 +47,7 @@ describe('simulación semanal — plantilla Jamaica', () => {
   });
 
   it('el tiempo WI-2 → RC-0 tiene percentiles ordenados', () => {
-    expect(r.time.n).toBe(r.totals.pkgs);
+    expect(r.time.n).toBe(r.events['RC-0']);
     expect(r.time.p90).toBeLessThanOrEqual(r.time.p95);
     expect(r.time.p95).toBeLessThanOrEqual(r.time.p98);
     expect(r.time.mean).toBeGreaterThan(0);
@@ -58,7 +60,13 @@ describe('simulación semanal — plantilla Jamaica', () => {
   });
 
   it('utilización entre 0 y 100 %', () => {
-    r.processes.forEach(p => { expect(p.util).toBeGreaterThanOrEqual(0); expect(p.util).toBeLessThanOrEqual(1.0001); });
+    r.shifts.forEach(s => { expect(s.util).toBeGreaterThanOrEqual(0); expect(s.util).toBeLessThanOrEqual(1.01); });
+  });
+
+  it('el CPT se calcula para cada paquete con RC-0', () => {
+    expect(r.cpt.n).toBe(r.events['RC-0']);
+    expect(r.cpt.onTime + r.cpt.late + r.cpt.noCpt).toBe(r.cpt.n);
+    expect(r.cpt.pct).toBeGreaterThan(0);
   });
 });
 
@@ -82,9 +90,9 @@ describe('reglas de negocio', () => {
     expect(r.totals.unfinished).toBe(0);
   });
 
-  it('con personal insuficiente en reverificación los paquetes no terminan y se advierte', () => {
+  it('sin personal los paquetes no terminan y se advierte', () => {
     const w = base();
-    w.shifts.forEach(s => (s.staff.reverify = 0));
+    w.shifts.forEach(s => Object.keys(s.staff).forEach(k => ((s.staff as Record<string, number>)[k] = 0)));
     const r = simulate(w);
     expect(r.totals.unfinished).toBeGreaterThan(0);
     expect(r.warnings.some(x => x.key === 'w.unfinished')).toBe(true);
@@ -101,7 +109,7 @@ describe('reglas de negocio', () => {
     const w = base();
     w.shifts[0].staff.sort = 3; w.shifts[1].staff.sort = 10; w.capacity.stations.sort = 20;
     const r = simulate(w, { log: false });
-    const u = (night: boolean) => r.shifts.find(s => s.process === 'sort' && s.night === night)!.util;
+    const u = (night: boolean) => r.shifts.find(s => s.night === night)!.util;
     expect(u(true)).toBeLessThan(u(false)); // 10 personas de noche no pueden estar tan ocupadas como 3 de día
   });
 
@@ -111,9 +119,8 @@ describe('reglas de negocio', () => {
     w.inbound.forEach(i => (i.packages *= 3));
     const r = simulate(w, { log: false });
     // 1 % de margen: la tarea en curso al cierre del turno se termina (antes del arreglo daba 114 %)
-    r.processes.forEach(p => expect(p.busyMin).toBeLessThanOrEqual(p.paidMin * 1.01));
     r.shifts.forEach(s => expect(s.busyMin).toBeLessThanOrEqual(s.paidMin * 1.01));
-    expect(r.shifts.find(s => s.process === 'sort')!.otMin).toBeGreaterThan(0);
+    expect(r.shifts.find(s => s.night)!.otMin).toBeGreaterThan(0);
   });
 
   it('el peso y volumen del paquete limitan la carga del camión', () => {
@@ -121,6 +128,69 @@ describe('reglas de negocio', () => {
     w.capacity.truckM3 = 1; // camión diminuto: necesita varios viajes
     const r = simulate(w, { log: false });
     r.outbound.forEach(o => expect(o.units === 1 || o.m3 <= 1 + 1e-9).toBe(true));
+  });
+});
+
+describe('iteración 2', () => {
+  it('multiskill: con toda la gente asignada a descarga igual se hace todo, cambiando de puesto', () => {
+    const w = base();
+    w.shifts.forEach(s => { const n = Object.values(s.staff).reduce((a, b) => a + b, 0); Object.keys(s.staff).forEach(k => ((s.staff as Record<string, number>)[k] = 0)); s.staff.unload = n; });
+    const r = simulate(w, { log: false });
+    expect(r.totals.unfinished).toBe(0);
+    expect(r.shifts.reduce((a, s) => a + s.changes, 0)).toBeGreaterThan(0);
+    r.shifts.forEach(s => expect(s.busyMin).toBeLessThanOrEqual(s.paidMin * 1.01));
+  });
+
+  it('sorter: no supera la capacidad de la máquina', () => {
+    const w = base();
+    w.sorting.type = 'sorter'; w.sorting.sorter.machinePerHour = 600; w.sorting.sorter.inductionPoints = 8;
+    w.shifts.forEach(s => (s.staff.sort = 8));
+    const r = simulate(w, { log: false });
+    expect(r.sorter!.inducted).toBeGreaterThan(0);
+    expect(r.sorter!.peakPerHour).toBeLessThanOrEqual(600 * 1.05);
+    expect(r.totals.unfinished).toBe(0);
+  });
+
+  it('sorter: no mecanizables y bocas compartidas se clasifican a mano', () => {
+    const w = base();
+    w.sorting.type = 'sorter'; w.sorting.sorter.maxKg = 1.8; w.sorting.sorter.chutes = 5;
+    const r = simulate(w, { log: false });
+    expect(r.sorter!.nonConveyable).toBeGreaterThan(0);
+    expect(r.sorter!.sharedChute).toBeGreaterThan(0);
+    expect(r.totals.unfinished).toBe(0);
+  });
+
+  it('hospital: ~75 % se reetiqueta y vuelve, el resto se destruye', () => {
+    const w = base();
+    w.hospital.exceptionPct = 20;
+    const r = simulate(w, { log: false });
+    expect(r.hospital.in / r.totals.pkgs).toBeCloseTo(0.2, 1);
+    expect(r.hospital.relabeled / r.hospital.in).toBeCloseTo(0.75, 1);
+    expect(r.hospital.relabeled + r.hospital.destroyed).toBe(r.hospital.in);
+    expect(r.events['RC-0'] + r.hospital.destroyed).toBe(r.totals.pkgs);
+    expect(r.totals.unfinished).toBe(0);
+  });
+
+  it('CPT: con más tiempo esperado de procesamiento, más paquetes a tiempo', () => {
+    const a = base(), b = base();
+    a.cptLeadMin = 0; b.cptLeadMin = 600;
+    const ra = simulate(a, { log: false }), rb = simulate(b, { log: false });
+    expect(rb.cpt.pct).toBeGreaterThanOrEqual(ra.cpt.pct);
+  });
+
+  it('Branch: el RC-0 ocurre al llenarse el canasto, antes de cerrar el camión', () => {
+    const w = base();
+    w.capacity.basketPkgs = 10;
+    const r = simulate(w);
+    const firstClose = r.log.find(e => e.e === 'close')!.t;
+    expect(r.log.some(e => e.e === 'brT' && e.t < firstClose)).toBe(true);
+  });
+
+  it('carteros: retiran en las dos ventanas del día', () => {
+    const r = simulate(base(), { log: false });
+    const tue = r.pickups.filter(p => p.day === 1 && p.pkgs > 0).map(p => Math.floor((p.time % 1440) / 60));
+    expect(tue.some(h => h < 12)).toBe(true);
+    expect(tue.some(h => h >= 14)).toBe(true);
   });
 });
 

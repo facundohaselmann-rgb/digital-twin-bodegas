@@ -81,7 +81,6 @@ export class Deque<T> {
     this.n--;
     return x;
   }
-  peek(): T | undefined { return this.n ? this.a[this.head] : undefined; }
   *[Symbol.iterator](): IterableIterator<T> {
     for (let i = 0; i < this.n; i++) yield this.a[(this.head + i) % this.a.length] as T;
   }
